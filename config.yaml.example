@@ -1,0 +1,52 @@
+# BTC-Pulse Configuration
+# Copy to config.yaml and fill in your keys
+
+# API Keys
+api_keys:
+  coinglass: ""          # Coinglass API key (basic tier)
+  cryptoquant: ""        # CryptoQuant API key (optional)
+  openai: ""             # OpenAI API key for LLM sentiment (optional)
+
+# Data Settings
+data:
+  db_path: "data/btc_pulse.db"
+  snapshot_dir: "data/snapshots"
+  log_dir: "logs"
+  symbol: "BTC/USDT"
+  exchange: "binance"
+
+# Ingestion Schedule
+schedule:
+  daily_hour: 8
+  daily_minute: 5
+  timezone: "UTC"
+
+# Feature Engineering
+features:
+  ma_periods: [7, 14, 30, 90, 200]
+  fng_extreme_low: 20
+  fng_extreme_high: 80
+  funding_cumulative_days: 30
+  funding_overweight_threshold: 0.015  # 1.5%
+
+# Model Settings
+model:
+  xgboost:
+    n_estimators: 200
+    max_depth: 5
+    learning_rate: 0.05
+    train_test_split: 0.8
+  anomaly:
+    contamination: 0.05
+
+# Signal Thresholds
+signals:
+  ai_trend_up_threshold: 0.70
+  fng_buy_threshold: 15
+  fng_sell_threshold: 85
+  funding_sell_threshold: 0.02  # 2%
+
+# Dashboard
+dashboard:
+  port: 8501
+  theme: "dark"

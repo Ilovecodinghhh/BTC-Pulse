@@ -1,0 +1,10 @@
+# BTC-Pulse local files
+data/
+logs/
+*.db
+*.joblib
+__pycache__/
+*.pyc
+.env
+config.yaml
+data/snapshots/
