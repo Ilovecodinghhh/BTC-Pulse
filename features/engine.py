@@ -100,11 +100,11 @@ class FeatureEngine:
 
         # OI change rate
         if "open_interest" in df.columns:
-            df["oi_change_rate"] = df["open_interest"].pct_change(1)
+            df["oi_change_rate"] = df["open_interest"].pct_change(1, fill_method=None)
 
             # OI-Price divergence: price up but OI down (bearish signal)
             price_up = df["price_change_7d"] > 0
-            oi_down = df["open_interest"].pct_change(7) < -0.05
+            oi_down = df["open_interest"].pct_change(7, fill_method=None) < -0.05
             df["oi_price_divergence"] = (price_up & oi_down).astype(int)
 
         return df
