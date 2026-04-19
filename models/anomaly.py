@@ -37,7 +37,13 @@ class AnomalyDetector:
             conn.close()
 
         available = [c for c in self.ANOMALY_FEATURES if c in df.columns]
-        X = df[available].dropna()
+        X = df[available].apply(pd.to_numeric, errors="coerce")
+        # Drop columns >90% NaN, then fill remaining
+        null_pct = X.isna().mean()
+        X = X.drop(columns=null_pct[null_pct > 0.9].index.tolist())
+        X = X.fillna(0)
+        # Drop rows that were all-NaN originally
+        X = X[(X != 0).any(axis=1)]
 
         if len(X) < 50:
             return {"error": f"Not enough data ({len(X)} rows). Need at least 50."}
@@ -53,7 +59,8 @@ class AnomalyDetector:
         scores = self.model.decision_function(X)
 
         self.model_path.parent.mkdir(parents=True, exist_ok=True)
-        joblib.dump(self.model, self.model_path)
+        self._trained_features = list(X.columns)
+        joblib.dump({"model": self.model, "features": self._trained_features}, self.model_path)
 
         return {
             "trained_on": len(X),
@@ -65,9 +72,17 @@ class AnomalyDetector:
         """Check if the latest data point is anomalous."""
         if self.model is None:
             if self.model_path.exists():
-                self.model = joblib.load(self.model_path)
+                saved = joblib.load(self.model_path)
+                if isinstance(saved, dict):
+                    self.model = saved["model"]
+                    self._trained_features = saved.get("features", self.ANOMALY_FEATURES)
+                else:
+                    self.model = saved
+                    self._trained_features = self.ANOMALY_FEATURES
             else:
                 return {"error": "No trained model. Run train() first."}
+
+        trained_feats = getattr(self, "_trained_features", self.ANOMALY_FEATURES)
 
         conn = get_connection()
         try:
@@ -80,8 +95,11 @@ class AnomalyDetector:
         if df.empty:
             return {"error": "No features available."}
 
-        available = [c for c in self.ANOMALY_FEATURES if c in df.columns]
-        X = df[available].fillna(0)
+        # Use same features as training
+        for col in trained_feats:
+            if col not in df.columns:
+                df[col] = 0
+        X = df[trained_feats].apply(pd.to_numeric, errors="coerce").fillna(0)
 
         prediction = self.model.predict(X)[0]
         score = self.model.decision_function(X)[0]

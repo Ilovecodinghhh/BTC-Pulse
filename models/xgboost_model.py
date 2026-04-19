@@ -63,8 +63,21 @@ class XGBoostCombiner:
         X = df[available].copy()
         y = df[self.LABEL_COL].copy()
 
-        # Drop rows with NaN in features
-        mask = X.notna().all(axis=1) & y.notna()
+        # Coerce all columns to numeric
+        X = X.apply(pd.to_numeric, errors="coerce")
+
+        # Drop columns that are >90% NaN (e.g. oi_change_rate when OI history unavailable)
+        null_pct = X.isna().mean()
+        sparse_cols = null_pct[null_pct > 0.9].index.tolist()
+        if sparse_cols:
+            logger.info(f"Dropping sparse columns (>90% NaN): {sparse_cols}")
+            X = X.drop(columns=sparse_cols)
+
+        # Fill remaining NaN with 0 (safe for tree models)
+        X = X.fillna(0)
+
+        # Drop rows without labels
+        mask = y.notna()
         X = X[mask]
         y = y[mask]
 
@@ -113,9 +126,10 @@ class XGBoostCombiner:
         importance = dict(zip(X.columns, self.model.feature_importances_))
         importance = dict(sorted(importance.items(), key=lambda x: x[1], reverse=True))
 
-        # Save model
+        # Save model + trained feature list
         self.model_path.parent.mkdir(parents=True, exist_ok=True)
-        joblib.dump(self.model, self.model_path)
+        self._trained_features = list(X.columns)
+        joblib.dump({"model": self.model, "features": self._trained_features}, self.model_path)
         logger.info(f"Model saved to {self.model_path}")
 
         result = {
@@ -138,10 +152,18 @@ class XGBoostCombiner:
         """
         if self.model is None:
             if self.model_path.exists():
-                self.model = joblib.load(self.model_path)
+                saved = joblib.load(self.model_path)
+                if isinstance(saved, dict):
+                    self.model = saved["model"]
+                    self._trained_features = saved.get("features", self.FEATURE_COLS)
+                else:
+                    self.model = saved
+                    self._trained_features = self.FEATURE_COLS
                 logger.info("Loaded saved XGBoost model")
             else:
                 return {"error": "No trained model. Run train() first."}
+
+        trained_feats = getattr(self, "_trained_features", self.FEATURE_COLS)
 
         if features is None:
             conn = get_connection()
@@ -156,11 +178,17 @@ class XGBoostCombiner:
             if df.empty:
                 return {"error": "No features available for prediction."}
 
-            available = [c for c in self.FEATURE_COLS if c in df.columns]
+            available = [c for c in trained_feats if c in df.columns]
             features = df[available]
 
-        # Handle NaN
-        features = features.fillna(0)
+        # Ensure same columns as training
+        for col in trained_feats:
+            if col not in features.columns:
+                features[col] = 0
+        features = features[trained_feats]
+
+        # Handle NaN and type coercion
+        features = features.apply(pd.to_numeric, errors="coerce").fillna(0)
 
         proba = self.model.predict_proba(features)[0]
         labels = ["bearish", "neutral", "bullish"]
