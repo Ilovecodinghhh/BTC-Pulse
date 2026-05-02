@@ -26,7 +26,7 @@ def load_config(path: str | None = None) -> dict:
             f"Copy config.yaml.example to config.yaml and fill in your keys."
         )
 
-    with open(config_path, "r") as f:
+    with open(config_path, "r", encoding="utf-8") as f:
         _config = yaml.safe_load(f)
 
     return _config

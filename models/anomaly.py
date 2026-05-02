@@ -109,6 +109,6 @@ class AnomalyDetector:
         return {
             "is_anomaly": is_anomaly,
             "anomaly_score": round(float(score), 4),
-            "alert": "⚠️ ANOMALY DETECTED — unusual market behavior" if is_anomaly else "✅ Normal",
+            "alert": "WARNING: ANOMALY DETECTED - unusual market behavior" if is_anomaly else "Normal",
             "timestamp": df["timestamp"].iloc[0] if "timestamp" in df.columns else None,
         }

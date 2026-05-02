@@ -100,6 +100,7 @@ class FeatureEngine:
 
         # OI change rate
         if "open_interest" in df.columns:
+            # Don't forward-fill NaN values - compute percent change as-is
             df["oi_change_rate"] = df["open_interest"].pct_change(1, fill_method=None)
 
             # OI-Price divergence: price up but OI down (bearish signal)

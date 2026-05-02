@@ -100,6 +100,7 @@ cd BTC-Pulse
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+source ~/miniforge3/etc/profile.d/conda.sh
 ```
 
 ### 2. Configure

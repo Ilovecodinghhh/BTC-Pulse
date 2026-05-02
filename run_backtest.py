@@ -35,7 +35,7 @@ def main():
 
         bt = results.get("backtest", {})
         if "error" not in bt:
-            print("\n📊 BACKTEST RESULTS")
+            print("\n[BACKTEST RESULTS]")
             print(f"  Total Trades:    {bt.get('total_trades', 0)}")
             print(f"  Win Rate:        {bt.get('win_rate', 0):.1%}")
             print(f"  Total Return:    {bt.get('total_return', 0):.2%}")
@@ -44,11 +44,11 @@ def main():
             print(f"  Worst Trade:     {bt.get('worst_trade', 0):.2%}")
             print(f"  Sharpe Ratio:    {bt.get('sharpe_ratio', 0):.2f}")
         else:
-            print(f"  ⚠️ {bt['error']}")
+            print(f"  WARNING: {bt['error']}")
 
         fng = results.get("fng_study", {})
         if fng:
-            print("\n📖 FNG CONTRARIAN STUDY")
+            print("\n[FNG CONTRARIAN STUDY]")
             ef = fng.get("extreme_fear", {})
             eg = fng.get("extreme_greed", {})
             print(f"  Extreme Fear (FNG<20):  {ef.get('count', 0)} days, "
@@ -64,7 +64,7 @@ def main():
     try:
         xgb = XGBoostCombiner()
         train_result = xgb.train()
-        print("\n🤖 XGBOOST MODEL")
+        print("\n[XGBOOST MODEL]")
         print(f"  Accuracy:        {train_result.get('accuracy', 'N/A')}")
         print(f"  Train Samples:   {train_result.get('train_samples', 0)}")
         print(f"  Test Samples:    {train_result.get('test_samples', 0)}")
@@ -88,10 +88,10 @@ def main():
         train_result = anomaly.train()
         if "error" not in train_result:
             detection = anomaly.detect()
-            print(f"\n🔍 ANOMALY CHECK: {detection.get('alert', 'N/A')}")
+            print(f"\n[ANOMALY CHECK]: {detection.get('alert', 'N/A')}")
             print(f"  Score: {detection.get('anomaly_score', 'N/A')}")
         else:
-            print(f"  ⚠️ {train_result['error']}")
+            print(f"  WARNING: {train_result['error']}")
     except Exception as e:
         logger.error(f"Anomaly detection failed: {e}")
 

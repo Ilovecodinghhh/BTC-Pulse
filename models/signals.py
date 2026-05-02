@@ -205,13 +205,13 @@ class SignalGenerator:
         # Trend rating
         if composite > 0.3:
             rating = "BULLISH"
-            emoji = "🟢"
+            emoji = "[UP]"
         elif composite < -0.3:
             rating = "BEARISH"
-            emoji = "🔴"
+            emoji = "[DOWN]"
         else:
             rating = "NEUTRAL"
-            emoji = "🟡"
+            emoji = "[--]"
 
         return {
             "composite_score": round(composite, 3),
