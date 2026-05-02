@@ -8,3 +8,7 @@ __pycache__/
 .env
 config.yaml
 data/snapshots/
+data/
+logs/
+config.yaml
+*.db

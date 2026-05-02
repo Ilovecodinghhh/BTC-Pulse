@@ -1,11 +1,20 @@
 # BTC-Pulse Configuration
 # Copy to config.yaml and fill in your keys
 
-# API Keys
+# API Keys — all core data is FREE (no paid APIs required)
 api_keys:
-  coinglass: ""          # Coinglass API key (basic tier)
-  cryptoquant: ""        # CryptoQuant API key (optional)
-  openai: ""             # OpenAI API key for LLM sentiment (optional)
+  # Exchange data — public endpoints, no key needed
+  binance_public: ""
+  okx_public: ""
+  bybit_public: ""
+
+  # AI Sentiment — choose one:
+  #   DeepSeek (cheap): set provider + key + url
+  #   Ollama (free/local): set provider to "ollama", url to localhost
+  #   OpenAI (paid): set provider to "openai"
+  ai_provider: "deepseek"          # "deepseek" | "ollama" | "openai"
+  ai_api_key: ""                   # DeepSeek or OpenAI key (leave blank for Ollama)
+  ai_base_url: "https://api.deepseek.com"  # or http://localhost:11434/v1 for Ollama
 
 # Data Settings
 data:
@@ -13,6 +22,7 @@ data:
   snapshot_dir: "data/snapshots"
   log_dir: "logs"
   symbol: "BTC/USDT"
+  futures_symbol: "BTC/USDT:USDT"
   exchange: "binance"
 
 # Ingestion Schedule

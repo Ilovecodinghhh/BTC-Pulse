@@ -15,14 +15,14 @@ Version 2.0 integrates battle-tested concepts from [Freqtrade](https://github.co
 
 ## ✨ Key Features
 
-### Core Analysis Engine
-| Module | Source | What It Does |
-|--------|--------|-------------|
-| **Market Data** | Binance OHLCV | Price, volume, moving averages, VWAP |
-| **Derivatives** | Binance Futures + Coinglass | Funding rate, open interest, liquidation signals |
-| **Sentiment** | Alternative.me Fear & Greed | Contrarian extremes detection |
-| **AI Layer** | XGBoost + OpenAI LLM | ML trend prediction + narrative sentiment |
-| **Anomaly Detection** | Isolation Forest | Regime change / black swan alerts |
+### Core Analysis Engine — 100% Free Data Sources
+| Module | Source | What It Does | Cost |
+|--------|--------|-------------|------|
+| **Market Data** | Binance OHLCV (CCXT public) | Price, volume, moving averages, VWAP | **Free** |
+| **Derivatives** | Binance + OKX + Bybit (CCXT public) | Funding rate (multi-exchange avg), open interest | **Free** |
+| **Sentiment** | Alternative.me Fear & Greed | Contrarian extremes detection | **Free** |
+| **AI Layer** | XGBoost + DeepSeek/Ollama LLM | ML trend prediction + narrative sentiment | **Free** (Ollama) or ~$0.001/call (DeepSeek) |
+| **Anomaly Detection** | Isolation Forest | Regime change / black swan alerts | **Free** |
 
 ### Freqtrade-Inspired Strategy Engine *(NEW in v2.0)*
 | Feature | Inspired By | Description |
@@ -106,9 +106,10 @@ pip install -r requirements.txt
 
 ```bash
 cp config.yaml.example config.yaml
-# Edit config.yaml with your API keys:
-#   - coinglass (optional, for extended derivatives data)
-#   - openai (optional, for LLM sentiment analysis)
+# Edit config.yaml:
+#   All core data is FREE — no paid API keys needed!
+#   Optional: set ai_provider to "deepseek" or "ollama" for LLM sentiment
+#   Optional: set ai_api_key for DeepSeek (or leave blank for Ollama local)
 ```
 
 ### 3. Ingest Data
@@ -252,8 +253,15 @@ BTC-Pulse doesn't *run* Freqtrade — it *learns from* it. Here's what we borrow
 ```yaml
 # config.yaml
 api_keys:
-  coinglass: ""      # Coinglass for extended derivatives (optional)
-  openai: ""         # OpenAI for LLM sentiment (optional)
+  # All core data uses FREE public APIs — no keys needed!
+  binance_public: ""     # No key required
+  okx_public: ""         # No key required
+  bybit_public: ""       # No key required
+
+  # AI Sentiment — pick one:
+  ai_provider: "deepseek"   # "deepseek" | "ollama" | "openai"
+  ai_api_key: ""             # DeepSeek key, or blank for Ollama
+  ai_base_url: "https://api.deepseek.com"  # or http://localhost:11434/v1
 
 data:
   db_path: "data/btc_pulse.db"

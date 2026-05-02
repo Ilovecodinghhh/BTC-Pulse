@@ -1,33 +1,88 @@
 """
 Derivatives collector — fetches funding rate, OI, and liquidation data.
-Uses Coinglass API (requires API key for full access) with Binance public fallback.
+Uses CCXT public endpoints (Binance, OKX, Bybit) — NO API keys required.
+Multi-exchange aggregation for more robust signals.
 """
 
-import requests
 import ccxt
 import pandas as pd
+import numpy as np
 from datetime import datetime, timedelta, timezone
 from loguru import logger
 
 from database.init_db import get_connection, get_last_timestamp
-from utils.config import get_api_key, load_config
+from utils.config import load_config
 from utils.retry import safe_api_call
 
 
 class DerivativesCollector:
-    """Collects derivatives data: funding rate, OI, liquidations."""
+    """
+    Collects derivatives data from multiple exchanges via CCXT public APIs.
+    No API keys required — uses publicly available endpoints.
 
-    COINGLASS_BASE = "https://open-api.coinglass.com/public/v2"
+    Sources:
+    - Funding Rate: averaged across Binance, OKX, Bybit
+    - Open Interest: from Binance futures (public)
+    """
 
     def __init__(self):
-        self.coinglass_key = get_api_key("coinglass")
         cfg = load_config()
-        exchange_id = cfg.get("data", {}).get("exchange", "binance")
-        self.exchange = getattr(ccxt, exchange_id)({"enableRateLimit": True})
+        self.futures_symbol = cfg.get("data", {}).get("futures_symbol", "BTC/USDT:USDT")
+
+        # Initialize multiple exchanges for aggregation (all public, no keys)
+        self.exchanges = []
+        for ExClass in [ccxt.binance, ccxt.okx, ccxt.bybit]:
+            try:
+                ex = ExClass({
+                    "enableRateLimit": True,
+                    "options": {"defaultType": "swap"},
+                })
+                self.exchanges.append(ex)
+            except Exception as e:
+                logger.warning(f"Failed to init {ExClass.__name__}: {e}")
+
+        # Primary exchange for historical funding
+        self.primary_exchange = ccxt.binance({
+            "enableRateLimit": True,
+            "options": {"defaultType": "swap"},
+        })
 
     @safe_api_call
-    def _fetch_funding_from_binance(self, since_ms: int) -> list[dict]:
-        """Fallback: fetch funding rate history from Binance futures API."""
+    def _fetch_multi_exchange_funding(self) -> dict:
+        """
+        Fetch current funding rate from multiple exchanges.
+        Returns average across all available sources.
+        No API keys needed — CCXT public endpoints.
+        """
+        rates = {}
+        for ex in self.exchanges:
+            try:
+                data = ex.fetch_funding_rate(self.futures_symbol)
+                if data and "fundingRate" in data:
+                    rates[ex.id] = float(data["fundingRate"])
+                    logger.debug(f"  {ex.id} funding: {data['fundingRate']}")
+            except Exception as e:
+                logger.debug(f"  {ex.id} funding unavailable: {e}")
+                continue
+
+        if not rates:
+            return {"avg_rate": None, "sources": 0, "rates": {}}
+
+        avg_rate = np.mean(list(rates.values()))
+        return {
+            "avg_rate": avg_rate,
+            "sources": len(rates),
+            "rates": rates,
+        }
+
+    @safe_api_call
+    def _fetch_funding_history(self, since_ms: int) -> list[dict]:
+        """
+        Fetch historical funding rates from Binance futures (public endpoint).
+        No API key needed for historical funding rate data.
+        """
+        import requests
+
         url = "https://fapi.binance.com/fapi/v1/fundingRate"
         all_data = []
         start = since_ms
@@ -54,29 +109,45 @@ class DerivativesCollector:
         return all_data
 
     @safe_api_call
-    def _fetch_oi_from_binance(self) -> dict | None:
-        """Fetch current open interest from Binance futures."""
-        url = "https://fapi.binance.com/fapi/v1/openInterest"
-        resp = requests.get(url, params={"symbol": "BTCUSDT"}, timeout=30)
-        resp.raise_for_status()
-        return resp.json()
+    def _fetch_open_interest(self) -> float | None:
+        """
+        Fetch current open interest via CCXT public API.
+        Tries multiple exchanges as fallback.
+        """
+        for ex in self.exchanges:
+            try:
+                # CCXT unified method for open interest
+                oi = ex.fetch_open_interest(self.futures_symbol)
+                if oi and "openInterestAmount" in oi:
+                    return float(oi["openInterestAmount"])
+                elif oi and "openInterest" in oi:
+                    return float(oi["openInterest"])
+            except Exception as e:
+                logger.debug(f"  {ex.id} OI unavailable: {e}")
+                continue
 
-    @safe_api_call
-    def _fetch_coinglass_funding(self) -> list[dict]:
-        """Fetch funding rate from Coinglass (if key available)."""
-        if not self.coinglass_key:
-            return []
-
-        headers = {"coinglassSecret": self.coinglass_key}
-        url = f"{self.COINGLASS_BASE}/funding"
-        params = {"symbol": "BTC", "time_type": "all"}
-        resp = requests.get(url, headers=headers, params=params, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-        return data.get("data", [])
+        # Fallback: Binance REST directly
+        try:
+            import requests
+            resp = requests.get(
+                "https://fapi.binance.com/fapi/v1/openInterest",
+                params={"symbol": "BTCUSDT"},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return float(data.get("openInterest", 0))
+        except Exception as e:
+            logger.warning(f"OI fetch failed entirely: {e}")
+            return None
 
     def collect(self) -> pd.DataFrame:
-        """Fetch derivatives data. Uses Binance public API as primary source."""
+        """
+        Fetch derivatives data using only free/public APIs.
+        - Historical funding: Binance public endpoint
+        - Current funding: averaged across Binance, OKX, Bybit
+        - Open interest: CCXT public endpoint
+        """
         last_ts = get_last_timestamp("table_derivatives")
 
         if last_ts:
@@ -88,21 +159,34 @@ class DerivativesCollector:
 
         since_ms = int(since_dt.timestamp() * 1000)
 
-        # Fetch funding rate history from Binance
-        raw_funding = self._fetch_funding_from_binance(since_ms)
+        # Fetch historical funding rate (free Binance endpoint)
+        logger.info("Fetching funding rate history (Binance public API)...")
+        raw_funding = self._fetch_funding_history(since_ms)
 
         if not raw_funding:
-            logger.info("No new funding rate data")
+            # Try getting at least the current rate from multi-exchange
+            current = self._fetch_multi_exchange_funding()
+            if current and current["avg_rate"] is not None:
+                today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                oi = self._fetch_open_interest()
+                return pd.DataFrame([{
+                    "timestamp": today,
+                    "funding_rate": current["avg_rate"],
+                    "open_interest": oi,
+                    "long_liquidations": None,
+                    "short_liquidations": None,
+                    "long_short_ratio": None,
+                }])
+            logger.info("No new funding rate data available")
             return pd.DataFrame()
 
-        # Group by date and take the daily average funding rate
+        # Process historical funding into daily records
         records = []
         for item in raw_funding:
             ts = datetime.fromtimestamp(item["fundingTime"] / 1000, tz=timezone.utc)
             records.append({
                 "timestamp": ts.strftime("%Y-%m-%d"),
                 "funding_rate": float(item["fundingRate"]),
-                "funding_time": ts,
             })
 
         df = pd.DataFrame(records)
@@ -112,19 +196,24 @@ class DerivativesCollector:
             funding_rate=("funding_rate", "mean"),
         ).reset_index()
 
-        # Try to get current OI
-        try:
-            oi_data = self._fetch_oi_from_binance()
-            if oi_data:
-                today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                oi_val = float(oi_data.get("openInterest", 0))
-                # Add OI to the most recent row or create a row
-                if not daily.empty:
-                    daily.loc[daily["timestamp"] == daily["timestamp"].max(), "open_interest"] = oi_val
-        except Exception as e:
-            logger.warning(f"Could not fetch OI: {e}")
+        # Enrich latest row with current multi-exchange average
+        current = self._fetch_multi_exchange_funding()
+        if current and current["avg_rate"] is not None and current["sources"] > 1:
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            if not daily.empty and daily["timestamp"].max() == today:
+                # Replace today's single-exchange rate with multi-exchange average
+                daily.loc[daily["timestamp"] == today, "funding_rate"] = current["avg_rate"]
+                logger.info(f"Multi-exchange funding avg: {current['avg_rate']:.6f} "
+                           f"(from {current['sources']} sources)")
 
-        if "open_interest" not in daily.columns:
+        # Fetch current open interest (public)
+        oi = self._fetch_open_interest()
+        if oi is not None:
+            daily["open_interest"] = None
+            if not daily.empty:
+                daily.loc[daily.index[-1], "open_interest"] = oi
+                logger.info(f"Current OI: {oi:,.0f} BTC")
+        else:
             daily["open_interest"] = None
 
         daily["long_liquidations"] = None

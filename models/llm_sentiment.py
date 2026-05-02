@@ -1,6 +1,7 @@
 """
-LLM Sentiment Engine — uses OpenAI API to score analyst text.
-Identifies narratives that technical indicators can't capture.
+LLM Sentiment Engine — multi-provider support.
+Supports DeepSeek (cheap), Ollama (free/local), and OpenAI (paid).
+All use the OpenAI-compatible SDK interface.
 """
 
 import json
@@ -8,11 +9,15 @@ from datetime import datetime, timezone
 from loguru import logger
 
 from database.init_db import get_connection
-from utils.config import get_api_key
+from utils.config import load_config, get_api_key
 
 
 class LLMSentiment:
-    """Scores text sentiment using LLM API (OpenAI-compatible)."""
+    """
+    Scores text sentiment using LLM API.
+    Provider-agnostic: works with DeepSeek, Ollama, or OpenAI.
+    All three support the OpenAI SDK interface.
+    """
 
     SYSTEM_PROMPT = """You are a cryptocurrency market sentiment analyst.
 Analyze the given text about Bitcoin and return a JSON object with:
@@ -23,29 +28,65 @@ Analyze the given text about Bitcoin and return a JSON object with:
 
 Only return valid JSON, nothing else."""
 
+    # Model mapping per provider
+    PROVIDER_MODELS = {
+        "deepseek": "deepseek-chat",
+        "ollama": "llama3.1",          # Or whatever model is installed locally
+        "openai": "gpt-4o-mini",
+    }
+
     def __init__(self):
-        self.api_key = get_api_key("openai")
+        cfg = load_config()
+        ai_cfg = cfg.get("api_keys", {})
+
+        self.provider = ai_cfg.get("ai_provider", "deepseek")
+        self.api_key = ai_cfg.get("ai_api_key", "")
+        self.base_url = ai_cfg.get("ai_base_url", "")
+        self.model = self.PROVIDER_MODELS.get(self.provider, "deepseek-chat")
+
+        # Ollama doesn't need an API key
+        if self.provider == "ollama" and not self.api_key:
+            self.api_key = "ollama"  # Placeholder — Ollama ignores this
+        if self.provider == "ollama" and not self.base_url:
+            self.base_url = "http://localhost:11434/v1"
+
+        # DeepSeek default URL
+        if self.provider == "deepseek" and not self.base_url:
+            self.base_url = "https://api.deepseek.com"
+
+        # Legacy: fall back to old openai key if ai_api_key is empty
+        if not self.api_key and self.provider == "openai":
+            self.api_key = get_api_key("openai")
+
+    def _get_client(self):
+        """Create OpenAI-compatible client for any provider."""
+        import openai
+
+        kwargs = {"api_key": self.api_key}
+        if self.base_url:
+            kwargs["base_url"] = self.base_url
+
+        return openai.OpenAI(**kwargs)
 
     def analyze(self, text: str, source: str = "manual") -> dict:
         """
-        Analyze text sentiment using LLM.
+        Analyze text sentiment using the configured LLM provider.
         Returns sentiment score and narrative tags.
         """
         if not self.api_key:
-            logger.warning("No OpenAI API key configured — skipping LLM sentiment")
+            logger.warning(f"No API key for {self.provider} — skipping LLM sentiment. "
+                          f"Set ai_api_key in config.yaml (or use Ollama for free local inference)")
             return {
                 "sentiment_score": 0,
                 "narrative_tags": [],
                 "confidence": 0,
-                "summary": "LLM analysis unavailable (no API key)",
+                "summary": f"LLM analysis unavailable (no {self.provider} API key)",
             }
 
         try:
-            import openai
-
-            client = openai.OpenAI(api_key=self.api_key)
+            client = self._get_client()
             response = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=self.model,
                 messages=[
                     {"role": "system", "content": self.SYSTEM_PROMPT},
                     {"role": "user", "content": f"Analyze this text:\n\n{text[:2000]}"},
@@ -55,19 +96,28 @@ Only return valid JSON, nothing else."""
             )
 
             content = response.choices[0].message.content.strip()
-            # Try to parse JSON
+
+            # Strip markdown code fences if present
+            if content.startswith("```"):
+                content = content.split("\n", 1)[-1]
+                if content.endswith("```"):
+                    content = content[:-3]
+                content = content.strip()
+
             result = json.loads(content)
 
             # Store in database
             self._store(result, text[:500], source)
 
+            logger.info(f"LLM sentiment ({self.provider}/{self.model}): "
+                       f"score={result.get('sentiment_score', 0):.2f}")
             return result
 
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse LLM response: {e}")
             return {"sentiment_score": 0, "narrative_tags": [], "confidence": 0, "error": str(e)}
         except Exception as e:
-            logger.error(f"LLM sentiment analysis failed: {e}")
+            logger.error(f"LLM sentiment analysis failed ({self.provider}): {e}")
             return {"sentiment_score": 0, "narrative_tags": [], "confidence": 0, "error": str(e)}
 
     def _store(self, result: dict, text_snippet: str, source: str):
@@ -84,7 +134,7 @@ Only return valid JSON, nothing else."""
                     text_snippet,
                     result.get("sentiment_score", 0),
                     json.dumps(result.get("narrative_tags", [])),
-                    "gpt-4o-mini",
+                    f"{self.provider}/{self.model}",
                 ),
             )
             conn.commit()
