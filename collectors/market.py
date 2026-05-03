@@ -1,11 +1,11 @@
 """
-Market price collector — fetches BTC price and volume data.
+Market price collector — fetches BTC daily price and volume data.
 
-Primary source: Bitcoinity (free CSV, monthly data back to 2010)
-Secondary source: Exchange OHLCV via CCXT (daily granularity, fills recent gaps)
+Primary source: Bitcoinity (free CSV, daily data back to 2010-07-17)
+Secondary source: Exchange OHLCV via CCXT (daily OHLC candles, fills in open/high/low)
 
-The Bitcoinity data provides long-history coverage. CCXT daily data is
-overlaid on top for finer granularity (daily candles with OHLC).
+Bitcoinity provides daily avg price + volume with the longest free history available.
+Exchange data supplements with proper OHLC candles where available.
 """
 
 import ccxt
@@ -20,23 +20,21 @@ from utils.config import load_config
 from utils.retry import safe_api_call
 
 
-BITCOINITY_URL = (
+BITCOINITY_DAILY_URL = (
     "https://data.bitcoinity.org/export_data.csv"
-    "?currency=USD&data_type=price_volume&t=lb&timespan=all&vu=curr"
+    "?currency=USD&data_type=price_volume&r=day&t=lb&timespan=all&vu=curr"
 )
 
 
 class MarketCollector:
     """
-    Collects BTC/USD(T) price and volume data.
+    Collects BTC/USD(T) daily price and volume data.
 
     Strategy:
-      1. Fetch Bitcoinity CSV (monthly price+volume, 2010–present) — always
-         attempted first for maximum historical coverage.
+      1. Fetch Bitcoinity daily CSV (avg price + volume, 2010–present).
       2. Fetch daily OHLCV from exchange (Binance/OKX/Bybit/Kraken) for
-         granular recent data.
-      3. Daily exchange data takes precedence over Bitcoinity for any
-         overlapping dates (higher resolution).
+         proper open/high/low/close candles.
+      3. Exchange data takes precedence for overlapping dates (has real OHLC).
     """
 
     FALLBACK_EXCHANGES = ["binance", "okx", "bybit", "kraken"]
@@ -77,17 +75,16 @@ class MarketCollector:
         logger.error("All exchange fallbacks failed — using preferred without validation")
         return getattr(ccxt, preferred)({"enableRateLimit": True})
 
-    # ── Bitcoinity (primary: long history) ─────────────────────────
+    # ── Bitcoinity (primary: daily price+volume since 2010) ────────
 
     def collect_bitcoinity(self) -> pd.DataFrame:
         """
-        Fetch Bitcoinity CSV — monthly price+volume since 2010.
+        Fetch Bitcoinity daily CSV — price + volume since 2010-07-17.
         Returns DataFrame with columns: timestamp, open, high, low, close, volume, quote_volume
-        (open/high/low are set equal to close since Bitcoinity only provides avg price)
         """
         try:
-            logger.info("Fetching Bitcoinity historical data...")
-            resp = requests.get(BITCOINITY_URL, timeout=30, headers={
+            logger.info("Fetching Bitcoinity daily data...")
+            resp = requests.get(BITCOINITY_DAILY_URL, timeout=60, headers={
                 "User-Agent": "BTC-Pulse/2.0 (market-collector)"
             })
             resp.raise_for_status()
@@ -107,26 +104,27 @@ class MarketCollector:
 
             df["timestamp"] = pd.to_datetime(df["timestamp_raw"]).dt.strftime("%Y-%m-%d")
 
-            # Bitcoinity provides avg price, not OHLC — use price for all
+            # Bitcoinity gives daily avg price — use as close, approximate OHLC
             df["open"] = df["close"]
             df["high"] = df["close"]
             df["low"] = df["close"]
 
-            # Estimate BTC volume from quote volume / price
+            # Estimate BTC volume from quote_volume / price
             df["volume"] = df["quote_volume"] / df["close"].replace(0, float("nan"))
 
             df = df[["timestamp", "open", "high", "low", "close", "volume", "quote_volume"]]
             df = df.dropna(subset=["close"])
             df = df.drop_duplicates(subset=["timestamp"], keep="last")
 
-            logger.info(f"Bitcoinity: {len(df)} monthly records ({df['timestamp'].iloc[0]} → {df['timestamp'].iloc[-1]})")
+            logger.info(f"Bitcoinity: {len(df)} daily records "
+                        f"({df['timestamp'].iloc[0]} → {df['timestamp'].iloc[-1]})")
             return df
 
         except Exception as e:
             logger.warning(f"Bitcoinity fetch failed: {e}")
             return pd.DataFrame()
 
-    # ── Exchange OHLCV (secondary: daily granularity) ──────────────
+    # ── Exchange OHLCV (secondary: real OHLC candles) ──────────────
 
     @safe_api_call
     def _fetch_ohlcv(self, since_ms: int, limit: int = 1000) -> list:
@@ -140,8 +138,8 @@ class MarketCollector:
 
     def collect_exchange(self) -> pd.DataFrame:
         """
-        Fetch new daily OHLCV data from exchange since last stored record.
-        Returns DataFrame of newly fetched rows.
+        Fetch daily OHLCV from exchange since start_date (or last stored).
+        Returns DataFrame with proper open/high/low/close candles.
         """
         last_ts = get_last_timestamp("table_market_price")
 
@@ -162,7 +160,6 @@ class MarketCollector:
 
             all_data.extend(batch)
             logger.debug(f"Fetched {len(batch)} candles")
-
             since_ms = batch[-1][0] + 1
 
             if len(batch) < 1000:
@@ -180,8 +177,8 @@ class MarketCollector:
         # Remove today's incomplete candle
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         df = df[df["timestamp"] < today]
-
         df = df.drop_duplicates(subset=["timestamp"], keep="last")
+
         return df
 
     # ── Combined collect ───────────────────────────────────────────
@@ -189,7 +186,8 @@ class MarketCollector:
     def collect(self) -> pd.DataFrame:
         """
         Collect from both sources and merge.
-        Daily exchange data overwrites Bitcoinity for overlapping dates.
+        Exchange data (real OHLC) takes precedence over Bitcoinity (avg price)
+        for overlapping dates.
         """
         bitcoinity_df = self.collect_bitcoinity()
         exchange_df = self.collect_exchange()
@@ -203,30 +201,29 @@ class MarketCollector:
         if exchange_df.empty:
             return bitcoinity_df
 
-        # Exchange data takes precedence (daily OHLC > monthly avg)
-        # Mark source for merge priority
+        # Exchange data takes precedence (real OHLC > avg price)
         bitcoinity_df["_source"] = "bitcoinity"
         exchange_df["_source"] = "exchange"
 
         combined = pd.concat([bitcoinity_df, exchange_df], ignore_index=True)
 
-        # Keep exchange rows where dates overlap (they have real OHLC)
+        # Keep exchange rows where dates overlap
         combined = combined.sort_values(
             ["timestamp", "_source"],
-            ascending=[True, False],  # 'exchange' > 'bitcoinity' alphabetically reversed
+            ascending=[True, False],
         )
         combined = combined.drop_duplicates(subset=["timestamp"], keep="last")
         combined = combined.drop(columns=["_source"])
         combined = combined.sort_values("timestamp").reset_index(drop=True)
 
-        logger.info(f"Combined: {len(combined)} records "
+        logger.info(f"Combined: {len(combined)} daily records "
                     f"({combined['timestamp'].iloc[0]} → {combined['timestamp'].iloc[-1]})")
         return combined
 
     # ── Store ──────────────────────────────────────────────────────
 
     def store(self, df: pd.DataFrame) -> int:
-        """Store fetched data into SQLite. Returns number of rows inserted."""
+        """Store fetched data into SQLite. Returns number of rows inserted/updated."""
         if df.empty:
             return 0
 
@@ -235,7 +232,6 @@ class MarketCollector:
         try:
             for _, row in df.iterrows():
                 try:
-                    # Use INSERT OR REPLACE so exchange data can overwrite Bitcoinity
                     cursor = conn.execute(
                         """INSERT OR REPLACE INTO table_market_price
                            (timestamp, open, high, low, close, volume, quote_volume)

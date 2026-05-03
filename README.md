@@ -20,7 +20,7 @@ Version 2.0 integrates battle-tested concepts from [Freqtrade](https://github.co
 ### Core Analysis Engine — 100% Free Data Sources
 | Module | Source | What It Does | Cost |
 |--------|--------|-------------|------|
-| **Market Data** | Bitcoinity CSV (primary) + Exchange OHLCV via CCXT (secondary) | Price & volume history back to 2010 (Bitcoinity), daily OHLC candles (exchange) | **Free** |
+| **Market Data** | Bitcoinity CSV (primary) + Exchange OHLCV via CCXT (secondary) | Daily price & volume back to 2010 (Bitcoinity), daily OHLC candles (exchange) | **Free** |
 | **Derivatives** | Binance + OKX + Bybit (CCXT public) | Funding rate (multi-exchange avg), open interest | **Free** |
 | **Sentiment** | Alternative.me Fear & Greed | Contrarian extremes detection | **Free** |
 | **News Headlines** | CoinDesk + CoinTelegraph RSS | Narrative analysis via LLM | **Free** |
@@ -135,7 +135,7 @@ cp config.yaml.example config.yaml
 python run_ingest.py
 ```
 
-This fetches historical + latest data from Bitcoinity (monthly history back to 2010) and daily candles from Binance (or fallback exchanges), plus Fear & Greed Index, derivatives sources, and news headlines. Sets up the SQLite database automatically.
+This fetches historical + latest data from Bitcoinity (daily data back to 2010) and daily OHLC candles from Binance (or fallback exchanges), plus Fear & Greed Index, derivatives sources, and news headlines. Sets up the SQLite database automatically.
 
 > **Geo-blocked?** If Binance is unavailable in your region, the system automatically tries OKX → Bybit → Kraken as fallbacks. Bitcoinity data is always available regardless of region.
 

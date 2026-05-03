@@ -24,8 +24,8 @@ data:
   symbol: "BTC/USDT"
   futures_symbol: "BTC/USDT:USDT"
   exchange: "binance"              # Secondary source for daily OHLCV (fallback: okx, bybit, kraken)
-  start_date: "2020-01-01"        # ISO date for initial exchange fetch (Bitcoinity always fetches full history)
-  # Primary price+volume source: Bitcoinity CSV (monthly, back to 2010, always free)
+  start_date: "2020-01-01"        # ISO date for initial exchange fetch (Bitcoinity always fetches full daily history)
+  # Primary price+volume source: Bitcoinity daily CSV (back to 2010-07-17, always free)
 
 # Ingestion Schedule
 schedule:
