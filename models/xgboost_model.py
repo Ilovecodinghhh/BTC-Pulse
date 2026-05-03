@@ -122,6 +122,11 @@ class XGBoostCombiner:
         y_pred = self.model.predict(X_test)
         accuracy = accuracy_score(y_test, y_pred)
 
+        # Check for overfitting: compare train vs test accuracy
+        y_train_pred = self.model.predict(X_train)
+        train_accuracy = accuracy_score(y_train, y_train_pred)
+        overfit_gap = train_accuracy - accuracy
+
         # Feature importance
         importance = dict(zip(X.columns, self.model.feature_importances_))
         importance = dict(sorted(importance.items(), key=lambda x: x[1], reverse=True))
@@ -134,14 +139,16 @@ class XGBoostCombiner:
 
         result = {
             "accuracy": round(accuracy, 4),
+            "train_accuracy": round(train_accuracy, 4),
+            "overfit_gap": round(overfit_gap, 4),
             "train_samples": len(X_train),
             "test_samples": len(X_test),
             "feature_importance": {k: round(v, 4) for k, v in importance.items()},
         }
 
-        logger.info(f"Training complete — accuracy: {accuracy:.2%}")
-        if accuracy > 0.85:
-            logger.warning("⚠️ Suspiciously high accuracy — possible overfitting!")
+        logger.info(f"Training complete — test accuracy: {accuracy:.2%}, train accuracy: {train_accuracy:.2%}")
+        if overfit_gap > 0.15:
+            logger.warning(f"⚠️ Possible overfitting: train-test accuracy gap = {overfit_gap:.2%}")
 
         return result
 
