@@ -7,8 +7,8 @@ __pycache__/
 *.pyc
 .env
 config.yaml
-data/snapshots/
-data/
-logs/
-config.yaml
-*.db
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
