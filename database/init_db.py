@@ -151,8 +151,16 @@ def get_connection(db_path: str | Path | None = None) -> sqlite3.Connection:
     return conn
 
 
+ALLOWED_TABLES = frozenset({
+    "table_market_price", "table_derivatives", "table_sentiment",
+    "table_ai_sentiment", "table_features", "table_predictions",
+})
+
+
 def get_last_timestamp(table: str, db_path: str | Path | None = None) -> str | None:
     """Get the most recent timestamp from a table for incremental updates."""
+    if table not in ALLOWED_TABLES:
+        raise ValueError(f"Invalid table name: {table!r}")
     conn = get_connection(db_path)
     try:
         cursor = conn.execute(f"SELECT MAX(timestamp) FROM {table}")
