@@ -17,8 +17,10 @@ from database.init_db import init_database
 from collectors.market import MarketCollector
 from collectors.sentiment import SentimentCollector
 from collectors.derivatives import DerivativesCollector
+from collectors.news import NewsCollector
 from features.engine import FeatureEngine
 from models.signals import SignalGenerator
+from models.llm_sentiment import LLMSentiment
 from utils.logging import setup_logger
 from utils.config import get_snapshot_dir
 
@@ -81,7 +83,21 @@ def main():
     except Exception as e:
         logger.error(f"Derivatives collection failed: {e}")
 
-    # Step 4: Compute features
+    # Step 4: Collect news and run LLM sentiment
+    logger.info("── Collecting news for LLM sentiment ──")
+    try:
+        news = NewsCollector()
+        text = news.collect_as_text()
+        if text:
+            llm = LLMSentiment()
+            result = llm.analyze(text, source="rss_headlines")
+            logger.info(f"LLM sentiment: {result.get('sentiment_score', 'N/A')}")
+        else:
+            logger.info("No BTC news found for sentiment analysis")
+    except Exception as e:
+        logger.error(f"News/LLM sentiment failed: {e}")
+
+    # Step 5: Compute features
     logger.info("── Computing features ──")
     try:
         engine = FeatureEngine()
@@ -90,7 +106,7 @@ def main():
     except Exception as e:
         logger.error(f"Feature computation failed: {e}")
 
-    # Step 5: Generate signals
+    # Step 6: Generate signals
     logger.info("── Generating signals ──")
     try:
         signals = SignalGenerator()
@@ -99,7 +115,7 @@ def main():
     except Exception as e:
         logger.error(f"Signal generation failed: {e}")
 
-    # Step 6: Export daily snapshot
+    # Step 7: Export daily snapshot
     logger.info("── Exporting snapshot ──")
     try:
         export_daily_snapshot()
