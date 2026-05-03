@@ -28,6 +28,7 @@ class DerivativesCollector:
     def __init__(self):
         cfg = load_config()
         self.futures_symbol = cfg.get("data", {}).get("futures_symbol", "BTC/USDT:USDT")
+        self.start_date = cfg.get("data", {}).get("start_date", "2020-01-01")
 
         # Initialize multiple exchanges for aggregation (all public, no keys)
         self.exchanges = []
@@ -154,8 +155,8 @@ class DerivativesCollector:
             since_dt = datetime.fromisoformat(last_ts) + timedelta(hours=8)
             logger.info(f"Incremental derivatives fetch from {since_dt}")
         else:
-            since_dt = datetime(2020, 1, 1, tzinfo=timezone.utc)
-            logger.info("Initial derivatives fetch from 2020-01-01")
+            since_dt = datetime.fromisoformat(self.start_date).replace(tzinfo=timezone.utc)
+            logger.info(f"Initial derivatives fetch from {self.start_date}")
 
         since_ms = int(since_dt.timestamp() * 1000)
 

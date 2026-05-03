@@ -22,6 +22,7 @@ class MarketCollector:
         self.symbol = cfg.get("data", {}).get("symbol", "BTC/USDT")
         self.exchange = getattr(ccxt, exchange_id)({"enableRateLimit": True})
         self.timeframe = "1d"
+        self.start_date = cfg.get("data", {}).get("start_date", "2020-01-01")
 
     @safe_api_call
     def _fetch_ohlcv(self, since_ms: int, limit: int = 1000) -> list:
@@ -44,9 +45,9 @@ class MarketCollector:
             since_dt = datetime.fromisoformat(last_ts) + timedelta(days=1)
             logger.info(f"Incremental fetch from {since_dt.date()}")
         else:
-            # First run: fetch from 2020-01-01
-            since_dt = datetime(2020, 1, 1, tzinfo=timezone.utc)
-            logger.info("Initial fetch from 2020-01-01")
+            # First run: fetch from configured start_date
+            since_dt = datetime.fromisoformat(self.start_date).replace(tzinfo=timezone.utc)
+            logger.info(f"Initial fetch from {self.start_date}")
 
         since_ms = int(since_dt.timestamp() * 1000)
         all_data = []

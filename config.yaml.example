@@ -24,6 +24,7 @@ data:
   symbol: "BTC/USDT"
   futures_symbol: "BTC/USDT:USDT"
   exchange: "binance"
+  start_date: "2020-01-01"  # ISO date for initial data fetch (change to start later)
 
 # Ingestion Schedule
 schedule:
