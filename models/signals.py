@@ -205,13 +205,13 @@ class SignalGenerator:
         # Trend rating
         if composite > 0.3:
             rating = "BULLISH"
-            emoji = "[UP]"
+            emoji = "🟢"
         elif composite < -0.3:
             rating = "BEARISH"
-            emoji = "[DOWN]"
+            emoji = "🔴"
         else:
             rating = "NEUTRAL"
-            emoji = "[--]"
+            emoji = "🟡"
 
         return {
             "composite_score": round(composite, 3),
@@ -274,13 +274,13 @@ class SignalGenerator:
                 # Override rating if blended score gives different signal
                 if blended > 0.3:
                     result["rating"] = "BULLISH"
-                    result["emoji"] = "[UP]"
+                    result["emoji"] = "🟢"
                 elif blended < -0.3:
                     result["rating"] = "BEARISH"
-                    result["emoji"] = "[DOWN]"
+                    result["emoji"] = "🔴"
                 else:
                     result["rating"] = "NEUTRAL"
-                    result["emoji"] = "[--]"
+                    result["emoji"] = "🟡"
 
                 result["composite_score"] = blended
                 logger.info(f"Blended signal (rules+ML): {result['rating']} ({blended:.3f})")
