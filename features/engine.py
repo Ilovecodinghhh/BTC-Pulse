@@ -122,6 +122,28 @@ class FeatureEngine:
 
         return df
 
+    def _merge_ai_sentiment(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Merge the latest AI sentiment score from table_ai_sentiment."""
+        conn = get_connection()
+        try:
+            ai_sent = pd.read_sql_query(
+                """SELECT DATE(timestamp) as timestamp, AVG(sentiment_score) as ai_sentiment_score
+                   FROM table_ai_sentiment
+                   GROUP BY DATE(timestamp)
+                   ORDER BY timestamp""",
+                conn,
+            )
+        finally:
+            conn.close()
+
+        if ai_sent.empty:
+            return df
+
+        # Convert to date string for merging
+        ai_sent["timestamp"] = pd.to_datetime(ai_sent["timestamp"])
+        df = df.merge(ai_sent, on="timestamp", how="left")
+        return df
+
     def compute_all(self) -> pd.DataFrame:
         """Run full feature engineering pipeline."""
         logger.info("Loading raw data...")
@@ -156,6 +178,10 @@ class FeatureEngine:
         logger.info("Computing forward labels...")
         market = self._compute_labels(market)
 
+        # Merge AI sentiment scores (from LLM analysis)
+        logger.info("Merging AI sentiment scores...")
+        market = self._merge_ai_sentiment(market)
+
         # Select feature columns
         feature_cols = [
             "timestamp", "ma7", "ma14", "ma30", "ma90", "ma200",
@@ -164,7 +190,8 @@ class FeatureEngine:
             "monthly_vwap", "vwap_deviation",
             "fng_value", "fng_ma7", "fng_extreme_low", "fng_extreme_high",
             "funding_rate", "cumulative_funding_30d", "oi_change_rate",
-            "oi_price_divergence", "forward_return_30d", "forward_trend",
+            "oi_price_divergence", "ai_sentiment_score",
+            "forward_return_30d", "forward_trend",
         ]
 
         # Only keep columns that exist
