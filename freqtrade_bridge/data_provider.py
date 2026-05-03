@@ -7,6 +7,11 @@ Inspired by Freqtrade's DataProvider:
 - Rate-limited exchange access
 - Orderbook data (when available)
 - Ticker data caching
+
+NOTE: For daily data ingestion and storage, use collectors/ (MarketCollector,
+SentimentCollector, DerivativesCollector). This DataProvider is the READ layer
+used by strategies and the backtester — it reads from the DB populated by
+collectors and can also fetch live data for non-daily timeframes.
 """
 
 import ccxt
