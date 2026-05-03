@@ -166,6 +166,41 @@ if not sig_features.empty:
     with st.expander("📋 Signal Details"):
         for name, mod in modules.items():
             st.write(f"**{name.replace('_', ' ').title()}**: {mod['detail']}")
+
+    # XGBoost ML prediction
+    with st.expander("🤖 XGBoost ML Prediction"):
+        try:
+            xgb = XGBoostCombiner()
+            ml_pred = xgb.predict()
+            if "error" not in ml_pred:
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    st.metric("ML Trend", ml_pred["predicted_trend"].upper(),
+                              f"Confidence: {ml_pred['confidence']:.1%}")
+                with col_b:
+                    st.metric("P(Bullish)", f"{ml_pred['probabilities']['bullish']:.1%}")
+                with col_c:
+                    st.metric("P(Bearish)", f"{ml_pred['probabilities']['bearish']:.1%}")
+            else:
+                st.info(f"ML model unavailable: {ml_pred['error']}")
+        except Exception as e:
+            st.info(f"ML prediction unavailable: {e}")
+
+    # Anomaly detection
+    with st.expander("⚠️ Anomaly Detection"):
+        try:
+            anomaly = AnomalyDetector()
+            detection = anomaly.detect()
+            if "error" not in detection:
+                if detection["is_anomaly"]:
+                    st.error(f"🚨 {detection['alert']}")
+                else:
+                    st.success(f"✅ {detection['alert']}")
+                st.write(f"Anomaly score: {detection['anomaly_score']}")
+            else:
+                st.info(f"Anomaly detector unavailable: {detection['error']}")
+        except Exception as e:
+            st.info(f"Anomaly detection unavailable: {e}")
 else:
     st.info("Run feature engineering to see trend ratings.")
 
