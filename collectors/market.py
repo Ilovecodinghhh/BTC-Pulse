@@ -14,15 +14,39 @@ from utils.retry import safe_api_call
 
 
 class MarketCollector:
-    """Collects BTC/USDT daily OHLCV data from Binance."""
+    """Collects BTC/USDT daily OHLCV data from exchange (Binance by default, with fallbacks)."""
+
+    FALLBACK_EXCHANGES = ["binance", "okx", "bybit", "kraken"]
 
     def __init__(self):
         cfg = load_config()
         exchange_id = cfg.get("data", {}).get("exchange", "binance")
         self.symbol = cfg.get("data", {}).get("symbol", "BTC/USDT")
-        self.exchange = getattr(ccxt, exchange_id)({"enableRateLimit": True})
         self.timeframe = "1d"
         self.start_date = cfg.get("data", {}).get("start_date", "2020-01-01")
+
+        self.exchange = self._init_exchange(exchange_id)
+
+    def _init_exchange(self, preferred: str):
+        """Initialize exchange with fallback if primary is unavailable."""
+        exchanges_to_try = [preferred] + [e for e in self.FALLBACK_EXCHANGES if e != preferred]
+
+        for ex_id in exchanges_to_try:
+            try:
+                ex_class = getattr(ccxt, ex_id, None)
+                if ex_class is None:
+                    continue
+                ex = ex_class({"enableRateLimit": True})
+                # Quick connectivity check — load markets
+                ex.load_markets()
+                logger.info(f"Using exchange: {ex_id}")
+                return ex
+            except Exception as e:
+                logger.warning(f"Exchange {ex_id} unavailable: {e}")
+
+        # Last resort: return preferred without connectivity check
+        logger.error("All exchange fallbacks failed — using preferred without validation")
+        return getattr(ccxt, preferred)({"enableRateLimit": True})
 
     @safe_api_call
     def _fetch_ohlcv(self, since_ms: int, limit: int = 1000) -> list:
