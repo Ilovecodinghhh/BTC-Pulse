@@ -255,8 +255,37 @@ class SignalGenerator:
             conn.close()
 
     def run(self) -> dict:
-        """Generate and store composite signal."""
+        """Generate and store composite signal (rule-based + ML consensus)."""
         df = self.load_features()
         result = self.composite_signal(df)
+
+        # Attempt to blend with XGBoost prediction for consensus
+        try:
+            from models.xgboost_model import XGBoostCombiner
+            xgb = XGBoostCombiner()
+            ml_pred = xgb.predict()
+            if "error" not in ml_pred:
+                # Blend: 60% rule-based, 40% ML
+                ml_score = (ml_pred["trend_up_probability"] - 0.5) * 2  # Map 0-1 → -1 to +1
+                blended = result["composite_score"] * 0.6 + ml_score * 0.4
+                result["ml_prediction"] = ml_pred
+                result["blended_score"] = round(blended, 3)
+
+                # Override rating if blended score gives different signal
+                if blended > 0.3:
+                    result["rating"] = "BULLISH"
+                    result["emoji"] = "[UP]"
+                elif blended < -0.3:
+                    result["rating"] = "BEARISH"
+                    result["emoji"] = "[DOWN]"
+                else:
+                    result["rating"] = "NEUTRAL"
+                    result["emoji"] = "[--]"
+
+                result["composite_score"] = blended
+                logger.info(f"Blended signal (rules+ML): {result['rating']} ({blended:.3f})")
+        except Exception as e:
+            logger.debug(f"ML blend unavailable (falling back to rules-only): {e}")
+
         self.store_prediction(result)
         return result
