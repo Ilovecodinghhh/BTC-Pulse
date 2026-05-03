@@ -1,7 +1,10 @@
 """
 Offline Backtest Engine — tests signal combinations on historical data.
 Fully offline: reads from SQLite, no network requests.
-Uses vectorbt for efficient backtesting.
+
+NOTE: This is the original simple backtester. For advanced walk-forward
+backtesting with ROI tables, trailing stops, and per-trade tagging,
+see freqtrade_bridge/backtester.py (FreqtradeBacktester).
 """
 
 import pandas as pd
