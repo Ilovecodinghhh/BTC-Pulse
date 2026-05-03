@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from freqtrade_bridge.strategy import BTCPulseStrategy
-from freqtrade_bridge.backtester import FreqtadeBacktester
+from freqtrade_bridge.backtester import FreqtradeBacktester
 from utils.logging import setup_logger
 
 logger = setup_logger("strategy_backtest")
@@ -44,14 +44,14 @@ def main():
         # Run final backtest with best params
         logger.info("\nRunning backtest with best parameters...")
         strategy = optimizer.apply_best_params(result.best_params)
-        backtester = FreqtadeBacktester(strategy)
+        backtester = FreqtradeBacktester(strategy)
         bt_result = backtester.run(days=args.days)
         print(bt_result.summary())
 
     else:
         logger.info("Running BTC-Pulse Strategy Backtest (Freqtrade-style)")
         strategy = BTCPulseStrategy()
-        backtester = FreqtadeBacktester(strategy)
+        backtester = FreqtradeBacktester(strategy)
         result = backtester.run(days=args.days)
         print(result.summary())
 

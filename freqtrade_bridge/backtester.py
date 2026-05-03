@@ -93,7 +93,7 @@ class BacktestResult:
         )
 
 
-class FreqtadeBacktester:
+class FreqtradeBacktester:
     """
     Walk-forward backtester inspired by Freqtrade.
 

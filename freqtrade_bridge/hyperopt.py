@@ -24,7 +24,7 @@ except ImportError:
     HAS_OPTUNA = False
 
 from freqtrade_bridge.strategy import BTCPulseStrategy
-from freqtrade_bridge.backtester import FreqtadeBacktester
+from freqtrade_bridge.backtester import FreqtradeBacktester
 
 
 @dataclass
@@ -108,7 +108,7 @@ class StrategyHyperopt:
         strategy = self._create_trial_strategy(trial)
 
         # Use cached data to avoid repeated DB queries
-        backtester = FreqtadeBacktester(strategy, self.initial_capital)
+        backtester = FreqtradeBacktester(strategy, self.initial_capital)
         result = backtester.run()
 
         if result.total_trades < 5:
