@@ -203,8 +203,8 @@ class MarketCollector:
     def collect(self) -> pd.DataFrame:
         """
         Collect from both sources and merge.
-        Exchange data (real OHLC) takes precedence over Bitcoinity (avg price)
-        for overlapping dates.
+        - OHLC prices: from exchange where available (real candles), else Bitcoinity (synthesized)
+        - Volume: always from Bitcoinity (aggregated across all exchanges, more complete)
         """
         bitcoinity_df = self.collect_bitcoinity()
         exchange_df = self.collect_exchange()
@@ -218,20 +218,30 @@ class MarketCollector:
         if exchange_df.empty:
             return bitcoinity_df
 
-        # Exchange data takes precedence (real OHLC > avg price)
-        bitcoinity_df["_source"] = "bitcoinity"
-        exchange_df["_source"] = "exchange"
+        # Build a volume lookup from Bitcoinity (the authoritative source)
+        btc_volume = bitcoinity_df.set_index("timestamp")[["volume", "quote_volume"]]
 
-        combined = pd.concat([bitcoinity_df, exchange_df], ignore_index=True)
+        # Start with Bitcoinity as the base (full history)
+        combined = bitcoinity_df.copy()
+        combined = combined.set_index("timestamp")
 
-        # Keep exchange rows where dates overlap
-        combined = combined.sort_values(
-            ["timestamp", "_source"],
-            ascending=[True, False],
-        )
-        combined = combined.drop_duplicates(subset=["timestamp"], keep="last")
-        combined = combined.drop(columns=["_source"])
-        combined = combined.sort_values("timestamp").reset_index(drop=True)
+        # Overlay exchange OHLC prices where available (better candle data)
+        ex = exchange_df.set_index("timestamp")
+        overlap = combined.index.intersection(ex.index)
+
+        if len(overlap) > 0:
+            # Take OHLC from exchange, but keep Bitcoinity volume
+            combined.loc[overlap, ["open", "high", "low", "close"]] = ex.loc[overlap, ["open", "high", "low", "close"]]
+            logger.info(f"Overlaid {len(overlap)} days of exchange OHLC onto Bitcoinity volume")
+
+        # Add any exchange-only dates not in Bitcoinity (very recent data)
+        ex_only = ex.index.difference(combined.index)
+        if len(ex_only) > 0:
+            combined = pd.concat([combined, ex.loc[ex_only]])
+            logger.info(f"Added {len(ex_only)} exchange-only dates")
+
+        combined = combined.sort_index().reset_index()
+        combined = combined.rename(columns={"index": "timestamp"})
 
         logger.info(f"Combined: {len(combined)} daily records "
                     f"({combined['timestamp'].iloc[0]} → {combined['timestamp'].iloc[-1]})")
