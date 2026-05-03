@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "btc-pulse"
+version = "2.0.0"
+description = "Multi-Dimensional Bitcoin Trend Prediction System"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+dependencies = [
+    "ccxt>=4.0.0",
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "requests>=2.31.0",
+    "apscheduler>=3.10.0",
+    "pyyaml>=6.0",
+    "sqlalchemy>=2.0.0",
+    "scipy>=1.11.0",
+    "scikit-learn>=1.3.0",
+    "xgboost>=2.0.0",
+    "matplotlib>=3.7.0",
+    "seaborn>=0.13.0",
+    "openai>=1.0.0",
+    "joblib>=1.3.0",
+    "streamlit>=1.28.0",
+    "plotly>=5.18.0",
+    "optuna>=3.4.0",
+    "loguru>=0.7.0",
+    "tenacity>=8.2.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.scripts]
+btcpulse-ingest = "run_ingest:main"
+btcpulse-backtest = "run_backtest:main"
+btcpulse-strategy = "run_strategy_backtest:main"
+
+[tool.setuptools]
+packages = ["collectors", "database", "features", "models", "freqtrade_bridge", "dashboard", "utils"]
