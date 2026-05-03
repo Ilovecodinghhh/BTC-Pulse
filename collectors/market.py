@@ -98,16 +98,32 @@ class MarketCollector:
             # Columns: Time, price, volume
             df = df.rename(columns={
                 "Time": "timestamp_raw",
-                "price": "close",
+                "price": "avg_price",
                 "volume": "quote_volume",
             })
 
             df["timestamp"] = pd.to_datetime(df["timestamp_raw"]).dt.strftime("%Y-%m-%d")
 
-            # Bitcoinity gives daily avg price — use as close, approximate OHLC
-            df["open"] = df["close"]
-            df["high"] = df["close"]
-            df["low"] = df["close"]
+            # Synthesize OHLC from consecutive daily avg prices.
+            # - close = today's avg price
+            # - open  = previous day's avg price (approximates the opening)
+            # - high  = max(open, close) + small spread based on daily change
+            # - low   = min(open, close) - small spread based on daily change
+            # This gives visible candlestick bodies and wicks.
+            df["close"] = df["avg_price"]
+            df["open"] = df["avg_price"].shift(1)
+
+            # For the first row, open = close
+            df["open"] = df["open"].fillna(df["close"])
+
+            # Estimate daily volatility spread from price movement
+            daily_change = (df["close"] - df["open"]).abs()
+            # Add ~0.5% minimum spread so candles are always visible
+            min_spread = df["close"] * 0.005
+            spread = daily_change.clip(lower=min_spread) * 0.5
+
+            df["high"] = df[["open", "close"]].max(axis=1) + spread
+            df["low"] = df[["open", "close"]].min(axis=1) - spread
 
             # Estimate BTC volume from quote_volume / price
             df["volume"] = df["quote_volume"] / df["close"].replace(0, float("nan"))
@@ -115,6 +131,7 @@ class MarketCollector:
             df = df[["timestamp", "open", "high", "low", "close", "volume", "quote_volume"]]
             df = df.dropna(subset=["close"])
             df = df.drop_duplicates(subset=["timestamp"], keep="last")
+            df = df.reset_index(drop=True)
 
             logger.info(f"Bitcoinity: {len(df)} daily records "
                         f"({df['timestamp'].iloc[0]} → {df['timestamp'].iloc[-1]})")
