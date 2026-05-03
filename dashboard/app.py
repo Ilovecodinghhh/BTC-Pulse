@@ -96,7 +96,7 @@ with st.sidebar:
 
     st.divider()
     st.header("📅 Date Range")
-    days_back = st.slider("Days to display", 30, 1825, 365)
+    days_back = st.slider("Days to display", 30, 3000, 365)
 
     st.divider()
     st.header("ℹ️ About")
