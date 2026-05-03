@@ -19,6 +19,7 @@ from loguru import logger
 from typing import Optional
 
 from freqtrade_bridge.strategy import BaseStrategy
+from freqtrade_bridge.risk_manager import RiskManager
 
 
 @dataclass
@@ -106,9 +107,13 @@ class FreqtradeBacktester:
     - No look-ahead bias
     """
 
-    def __init__(self, strategy: BaseStrategy, initial_capital: float = 10000.0):
+    def __init__(self, strategy: BaseStrategy, initial_capital: float = 10000.0,
+                 risk_manager: Optional[RiskManager] = None):
         self.strategy = strategy
         self.initial_capital = initial_capital
+        self.risk_manager = risk_manager or RiskManager(
+            total_capital=initial_capital, position_mode="atr"
+        )
 
     def _check_roi(self, trade: Trade, current_idx: int, entry_idx: int,
                    current_price: float) -> bool:
