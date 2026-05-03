@@ -74,13 +74,14 @@ class SentimentCollector:
         try:
             for _, row in df.iterrows():
                 try:
-                    conn.execute(
+                    cursor = conn.execute(
                         """INSERT OR IGNORE INTO table_sentiment
                            (timestamp, fng_value, fng_classification)
                            VALUES (?, ?, ?)""",
                         (row["timestamp"], row["fng_value"], row["fng_classification"]),
                     )
-                    inserted += 1
+                    if cursor.rowcount > 0:
+                        inserted += 1
                 except Exception as e:
                     logger.warning(f"Skip {row['timestamp']}: {e}")
             conn.commit()

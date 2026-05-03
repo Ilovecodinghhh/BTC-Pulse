@@ -237,7 +237,7 @@ class DerivativesCollector:
         try:
             for _, row in df.iterrows():
                 try:
-                    conn.execute(
+                    cursor = conn.execute(
                         """INSERT OR IGNORE INTO table_derivatives
                            (timestamp, funding_rate, open_interest,
                             long_liquidations, short_liquidations, long_short_ratio)
@@ -246,7 +246,8 @@ class DerivativesCollector:
                          row.get("open_interest"), row.get("long_liquidations"),
                          row.get("short_liquidations"), row.get("long_short_ratio")),
                     )
-                    inserted += 1
+                    if cursor.rowcount > 0:
+                        inserted += 1
                 except Exception as e:
                     logger.warning(f"Skip {row['timestamp']}: {e}")
             conn.commit()

@@ -94,14 +94,15 @@ class MarketCollector:
         try:
             for _, row in df.iterrows():
                 try:
-                    conn.execute(
+                    cursor = conn.execute(
                         """INSERT OR IGNORE INTO table_market_price 
                            (timestamp, open, high, low, close, volume, quote_volume)
                            VALUES (?, ?, ?, ?, ?, ?, ?)""",
                         (row["timestamp"], row["open"], row["high"], row["low"],
                          row["close"], row["volume"], row["quote_volume"]),
                     )
-                    inserted += 1
+                    if cursor.rowcount > 0:
+                        inserted += 1
                 except Exception as e:
                     logger.warning(f"Skip duplicate or error for {row['timestamp']}: {e}")
             conn.commit()
