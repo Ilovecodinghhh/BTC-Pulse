@@ -85,7 +85,7 @@ class XGBoostCombiner:
         return X, y
 
     def train(self) -> dict:
-        """Train XGBoost model with time-series aware splitting."""
+        """Train XGBoost model with time-series aware splitting and purge gap."""
         X, y = self._load_training_data()
 
         if len(X) < 100:
@@ -95,10 +95,22 @@ class XGBoostCombiner:
         label_map = {"bearish": 0, "neutral": 1, "bullish": 2}
         y_encoded = y.map(label_map)
 
-        # Time-series split (no future leakage)
+        # Time-series split with purge gap.
+        # Labels use a 30-day forward return, so the last 30 training rows
+        # have labels that peek into the test set's price window. We purge
+        # those rows to prevent leakage.
+        PURGE_GAP = 30
         split_idx = int(len(X) * (1 - self.test_size))
-        X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
-        y_train, y_test = y_encoded.iloc[:split_idx], y_encoded.iloc[split_idx:]
+
+        X_train = X.iloc[: split_idx - PURGE_GAP]
+        y_train = y_encoded.iloc[: split_idx - PURGE_GAP]
+        X_test = X.iloc[split_idx:]
+        y_test = y_encoded.iloc[split_idx:]
+
+        logger.info(
+            f"Train/test split: {len(X_train)} train, {PURGE_GAP} purge gap, "
+            f"{len(X_test)} test"
+        )
 
         # Train
         self.model = XGBClassifier(

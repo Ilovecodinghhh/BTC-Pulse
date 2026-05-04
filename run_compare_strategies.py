@@ -140,6 +140,10 @@ def run_composite_backtest() -> dict:
     Composite strategy: blend rule-based signal with XGBoost prediction.
     Entry when composite_score > 0.3, exit when < -0.3.
     The composite score = 0.6 * rules_score + 0.4 * ml_score.
+
+    IMPORTANT: Uses walk-forward (expanding window) XGBoost training to
+    avoid data leakage. The model is retrained periodically and only
+    predicts on out-of-sample data it has never seen.
     """
     conn = get_connection()
     try:
@@ -180,36 +184,80 @@ def run_composite_backtest() -> dict:
     # Clip total rules score
     df["rules_score"] = df["rules_score"].clip(-1.0, 1.0)
 
-    # --- XGBoost scoring ---
-    df["ml_score"] = 0.0  # Default neutral
+    # --- Walk-forward XGBoost scoring (no data leakage) ---
+    # Only predict on rows the model has NOT been trained on.
+    # Retrain every `retrain_interval` rows using an expanding window.
+    # Purge gap of 30 rows between train and predict to avoid label leakage
+    # (since forward_trend uses a 30-day lookahead).
+    df["ml_score"] = 0.0  # Default neutral (used for early rows with no model)
+
+    PURGE_GAP = 30          # Must match the forward label horizon (30 days)
+    MIN_TRAIN_ROWS = 200    # Minimum rows before first model
+    RETRAIN_INTERVAL = 60   # Retrain every 60 rows (≈2 months)
 
     try:
-        xgb = XGBoostCombiner()
-        if not xgb.model_path.exists():
-            logger.info("Training XGBoost model for composite strategy...")
-            xgb.train()
+        from xgboost import XGBClassifier
 
-        # Load model
-        import joblib
-        saved = joblib.load(xgb.model_path)
-        model = saved["model"] if isinstance(saved, dict) else saved
-        trained_features = saved.get("features", xgb.FEATURE_COLS) if isinstance(saved, dict) else xgb.FEATURE_COLS
+        xgb_ref = XGBoostCombiner()
+        trained_features = [c for c in xgb_ref.FEATURE_COLS if c in df.columns]
 
-        # Prepare features for all rows
-        available = [c for c in trained_features if c in df.columns]
-        X = df[available].copy()
-        for col in trained_features:
-            if col not in X.columns:
-                X[col] = 0
-        X = X[trained_features].apply(pd.to_numeric, errors="coerce").fillna(0)
+        if not trained_features:
+            raise ValueError("No usable features found in data")
 
-        # Predict probabilities for all rows
-        proba = model.predict_proba(X)
-        # proba columns: [bearish, neutral, bullish]
-        # ML score: map to [-1, +1] → bullish_prob - bearish_prob
-        df["ml_score"] = proba[:, 2] - proba[:, 0]
+        # Prepare feature matrix and labels for walk-forward
+        X_all = df[trained_features].apply(pd.to_numeric, errors="coerce").fillna(0)
+        label_col = "forward_trend"
+        label_map = {"bearish": 0, "neutral": 1, "bullish": 2}
 
-        logger.info("XGBoost predictions applied to composite signal")
+        if label_col in df.columns:
+            y_all = df[label_col].map(label_map)
+        else:
+            y_all = pd.Series(np.nan, index=df.index)
+
+        last_train_end = 0
+        model = None
+
+        for i in range(len(df)):
+            # Can we train/retrain?
+            # Training uses rows [0 .. i - PURGE_GAP] (purge avoids label overlap)
+            train_end = i - PURGE_GAP
+
+            if train_end >= MIN_TRAIN_ROWS and (model is None or (i - last_train_end) >= RETRAIN_INTERVAL):
+                # Expanding window train
+                X_train = X_all.iloc[:train_end]
+                y_train = y_all.iloc[:train_end]
+
+                # Drop rows without valid labels
+                valid_mask = y_train.notna()
+                X_train = X_train[valid_mask]
+                y_train = y_train[valid_mask]
+
+                if len(X_train) >= MIN_TRAIN_ROWS:
+                    model = XGBClassifier(
+                        n_estimators=150,
+                        max_depth=4,
+                        learning_rate=0.05,
+                        objective="multi:softprob",
+                        num_class=3,
+                        eval_metric="mlogloss",
+                        use_label_encoder=False,
+                        random_state=42,
+                        reg_alpha=0.1,      # L1 regularization
+                        reg_lambda=1.0,     # L2 regularization
+                        min_child_weight=5, # Reduce overfitting
+                    )
+                    model.fit(X_train, y_train, verbose=False)
+                    last_train_end = i
+                    logger.debug(f"Walk-forward retrain at row {i} (train size: {len(X_train)})")
+
+            # Predict with current model (out-of-sample only)
+            if model is not None:
+                x_row = X_all.iloc[[i]]
+                proba = model.predict_proba(x_row)[0]
+                # ML score: bullish_prob - bearish_prob → [-1, +1]
+                df.iloc[i, df.columns.get_loc("ml_score")] = float(proba[2] - proba[0])
+
+        logger.info("Walk-forward XGBoost predictions complete (no data leakage)")
     except Exception as e:
         logger.warning(f"XGBoost unavailable, using rules-only: {e}")
 
