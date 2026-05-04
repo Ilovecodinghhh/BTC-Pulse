@@ -162,6 +162,14 @@ class BTCPulseStrategy(BaseStrategy):
     trailing_stop_positive = 0.025
     trailing_stop_positive_offset = 0.04
 
+    # ── Hyperopt-tunable signal thresholds ────────────────────
+    # These are the defaults; hyperopt overrides them via _hp_* attributes.
+    _hp_rsi_buy: int = 35
+    _hp_rsi_sell: int = 75
+    _hp_fng_buy: int = 20
+    _hp_fng_sell: int = 85
+    _hp_bb_period: int = 20
+
     def populate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Compute all technical indicators — Freqtrade-style vectorized ops.
@@ -183,8 +191,9 @@ class BTCPulseStrategy(BaseStrategy):
         df["stoch_rsi_d"] = df["stoch_rsi_k"].rolling(3).mean()
 
         # ── Bollinger Bands ──────────────────────────────────
-        df["bb_mid"] = df["close"].rolling(20).mean()
-        bb_std = df["close"].rolling(20).std()
+        bb_period = getattr(self, "_hp_bb_period", 20)
+        df["bb_mid"] = df["close"].rolling(bb_period).mean()
+        bb_std = df["close"].rolling(bb_period).std()
         df["bb_upper"] = df["bb_mid"] + 2 * bb_std
         df["bb_lower"] = df["bb_mid"] - 2 * bb_std
         df["bb_width"] = (df["bb_upper"] - df["bb_lower"]) / df["bb_mid"]
@@ -271,14 +280,21 @@ class BTCPulseStrategy(BaseStrategy):
         """
         Multi-condition entry — inspired by Freqtrade's vectorized approach.
         Requires confluence of multiple signals (reduces false entries).
+
+        All indicator thresholds read from _hp_* attributes so that
+        hyperopt can tune them (falls back to class defaults).
         """
         df["enter_long"] = 0
         df["enter_tag"] = ""
 
+        # Read tunable thresholds
+        rsi_buy = getattr(self, "_hp_rsi_buy", 35)
+        fng_buy = getattr(self, "_hp_fng_buy", 20)
+
         # ── Entry 1: Contrarian Extreme Fear + Technical Oversold ────
         fear_entry = (
-            (df.get("fng_value", pd.Series(dtype=float)) < 20) &
-            (df["rsi"] < 35) &
+            (df.get("fng_value", pd.Series(dtype=float)) < fng_buy) &
+            (df["rsi"] < rsi_buy) &
             (df["close"] < df["bb_lower"]) &
             (df["macd_hist_rising"] == 1)
         )
@@ -310,7 +326,7 @@ class BTCPulseStrategy(BaseStrategy):
         if "funding_rate" in df.columns:
             funding_entry = (
                 (df["funding_rate"] < -0.001) &
-                (df["rsi"] < 40) &
+                (df["rsi"] < rsi_buy + 5) &
                 (df["stoch_rsi_k"] < 0.2) &
                 (df["obv"] > df["obv_sma20"])
             )
@@ -333,14 +349,20 @@ class BTCPulseStrategy(BaseStrategy):
     def populate_exit_trend(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Multi-condition exit — Freqtrade-style.
+
+        Thresholds read from _hp_* attributes (hyperopt-tunable).
         """
         df["exit_long"] = 0
         df["exit_tag"] = ""
 
+        # Read tunable thresholds
+        rsi_sell = getattr(self, "_hp_rsi_sell", 75)
+        fng_sell = getattr(self, "_hp_fng_sell", 85)
+
         # ── Exit 1: Extreme Greed + Overbought ──────────────────────
         greed_exit = (
-            (df.get("fng_value", pd.Series(dtype=float)) > 85) &
-            (df["rsi"] > 75) &
+            (df.get("fng_value", pd.Series(dtype=float)) > fng_sell) &
+            (df["rsi"] > rsi_sell) &
             (df["close"] > df["bb_upper"])
         )
         df.loc[greed_exit, "exit_long"] = 1
@@ -372,7 +394,7 @@ class BTCPulseStrategy(BaseStrategy):
         if "cumulative_funding_30d" in df.columns:
             leverage_exit = (
                 (df["cumulative_funding_30d"] > 0.02) &
-                (df["rsi"] > 65) &
+                (df["rsi"] > rsi_sell - 10) &
                 (df["volume_ratio"] < 0.8)
             )
             df.loc[leverage_exit, "exit_long"] = 1

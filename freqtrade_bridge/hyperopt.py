@@ -211,4 +211,11 @@ class StrategyHyperopt:
             "14400": 0.0,
         }
 
+        # Apply signal thresholds (used by populate_entry/exit_trend)
+        strategy._hp_rsi_buy = params.get("rsi_buy", strategy._hp_rsi_buy)
+        strategy._hp_rsi_sell = params.get("rsi_sell", strategy._hp_rsi_sell)
+        strategy._hp_fng_buy = params.get("fng_buy", strategy._hp_fng_buy)
+        strategy._hp_fng_sell = params.get("fng_sell", strategy._hp_fng_sell)
+        strategy._hp_bb_period = params.get("bb_period", strategy._hp_bb_period)
+
         return strategy
