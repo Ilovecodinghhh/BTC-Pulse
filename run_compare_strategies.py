@@ -65,19 +65,35 @@ def run_rules_backtest(days: int = None) -> dict:
     dates = [df.iloc[0]["timestamp"]]
     position = 0
     entry_price = 0
+    entry_idx = 0
     trades = []
 
     for i in range(len(df)):
         row = df.iloc[i]
 
-        if row["buy_signal"] == 1 and position == 0:
+        if position == 1:
+            pnl = (row["close"] - entry_price) / entry_price
+            days_held = i - entry_idx
+
+            exit_reason = None
+            if pnl <= engine.stoploss:
+                exit_reason = "stoploss"
+            elif row["sell_signal"] == 1:
+                exit_reason = "signal"
+            elif days_held >= engine.profit_exit_days and pnl > 0:
+                exit_reason = "profit_time_exit"
+            elif days_held >= engine.max_hold_days:
+                exit_reason = "max_hold_exit"
+
+            if exit_reason:
+                capital *= (1 + pnl)
+                position = 0
+                trades.append(pnl)
+
+        elif row["buy_signal"] == 1 and position == 0:
             position = 1
             entry_price = row["close"]
-        elif row["sell_signal"] == 1 and position == 1:
-            pnl_pct = (row["close"] - entry_price) / entry_price
-            capital *= (1 + pnl_pct)
-            position = 0
-            trades.append(pnl_pct)
+            entry_idx = i
 
         equity.append(capital)
         dates.append(row["timestamp"])

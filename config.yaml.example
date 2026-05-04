@@ -54,9 +54,12 @@ model:
 # Signal Thresholds
 signals:
   ai_trend_up_threshold: 0.70
-  fng_buy_threshold: 15
-  fng_sell_threshold: 85
-  funding_sell_threshold: 0.02  # 2%
+  fng_buy_threshold: 25        # FNG below this = buy (fear regime)
+  fng_sell_threshold: 70       # FNG above this = sell (greed regime)
+  funding_sell_threshold: 0.005  # Cumulative 30d funding above this = sell confirmation
+  stoploss: -0.15               # Hard stoploss per trade
+  max_hold_days: 180            # Force exit after N days
+  profit_exit_days: 90          # Take profit if green after N days
 
 # Dashboard
 dashboard:
