@@ -45,7 +45,7 @@ logger = setup_logger("compare_strategies")
 # Strategy 1: Rules-Only (original BTC-Pulse)
 # ═══════════════════════════════════════════════════════════════
 
-def run_rules_backtest() -> dict:
+def run_rules_backtest(days: int = None) -> dict:
     """Run the original rule-based backtest and return equity curve + metrics."""
     engine = BacktestEngine()
     df = engine.load_data()
@@ -55,6 +55,10 @@ def run_rules_backtest() -> dict:
         return {"equity": [], "dates": [], "metrics": {}, "name": "Rules-Only"}
 
     df = df.dropna(subset=["close"]).reset_index(drop=True)
+
+    if days and not df.empty:
+        cutoff = df["timestamp"].max() - pd.Timedelta(days=days)
+        df = df[df["timestamp"] >= cutoff].reset_index(drop=True)
 
     capital = 10000.0
     equity = [capital]
@@ -135,7 +139,7 @@ def run_freqtrade_backtest(days: int = None) -> dict:
 # Strategy 3: Composite (Rules 60% + XGBoost 40%)
 # ═══════════════════════════════════════════════════════════════
 
-def run_composite_backtest() -> dict:
+def run_composite_backtest(days: int = None) -> dict:
     """
     Composite strategy: blend rule-based signal with XGBoost prediction.
     Entry when composite_score > 0.3, exit when < -0.3.
@@ -159,6 +163,10 @@ def run_composite_backtest() -> dict:
 
     if df.empty or len(df) < 60:
         return {"equity": [], "dates": [], "metrics": {}, "name": "Composite (Rules+XGBoost)"}
+
+    if days and not df.empty:
+        cutoff = df["timestamp"].max() - pd.Timedelta(days=days)
+        df = df[df["timestamp"] >= cutoff].reset_index(drop=True)
 
     # --- Rule-based scoring (from SignalGenerator logic) ---
     df["rules_score"] = 0.0
@@ -481,7 +489,7 @@ def main():
     # Strategy 1: Rules-Only
     print("\n[1/3] Running Rules-Only backtest...")
     try:
-        r1 = run_rules_backtest()
+        r1 = run_rules_backtest(days=args.days)
         results.append(r1)
         m = r1["metrics"]
         print(f"      → {m.get('total_trades', 0)} trades, "
@@ -507,7 +515,7 @@ def main():
     # Strategy 3: Composite
     print("\n[3/3] Running Composite (Rules + XGBoost) backtest...")
     try:
-        r3 = run_composite_backtest()
+        r3 = run_composite_backtest(days=args.days)
         results.append(r3)
         m = r3["metrics"]
         print(f"      → {m.get('total_trades', 0)} trades, "
