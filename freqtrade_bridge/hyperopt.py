@@ -103,12 +103,17 @@ class StrategyHyperopt:
 
         return strategy
 
-    def _objective_fn(self, trial: "optuna.Trial", df_cache: list) -> float:
-        """Optuna objective function."""
+    def _objective_fn(self, trial: "optuna.Trial",
+                      df_cache: list, n_trials: int) -> float:
+        """Optuna objective function. Passes trial count for DSR."""
         strategy = self._create_trial_strategy(trial)
 
-        # Use cached data to avoid repeated DB queries
-        backtester = FreqtradeBacktester(strategy, self.initial_capital)
+        # n_hyperopt_trials is forwarded so the backtester can compute
+        # the Deflated Sharpe Ratio (adjusts for multiple comparisons).
+        backtester = FreqtradeBacktester(
+            strategy, self.initial_capital,
+            n_hyperopt_trials=n_trials,
+        )
         result = backtester.run()
 
         if result.total_trades < 5:
@@ -152,7 +157,7 @@ class StrategyHyperopt:
         df_cache = []  # Placeholder for data caching
 
         study.optimize(
-            lambda trial: self._objective_fn(trial, df_cache),
+            lambda trial: self._objective_fn(trial, df_cache, n_trials),
             n_trials=n_trials,
             timeout=timeout,
             show_progress_bar=show_progress,

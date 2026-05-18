@@ -37,8 +37,18 @@ from models.xgboost_model import XGBoostCombiner
 from freqtrade_bridge.strategy import BTCPulseStrategy
 from freqtrade_bridge.backtester import FreqtradeBacktester
 from utils.logging import setup_logger
+from utils.statistics import (
+    daily_returns_from_equity,
+    annualized_sharpe,
+    max_drawdown as compute_max_drawdown,
+    random_entry_baseline,
+    strategy_vs_random_pvalue,
+)
 
 logger = setup_logger("compare_strategies")
+
+# Fee per side (0.1% = Binance spot taker). Round-trip = 0.2%.
+FEE_PCT = 0.001
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -46,8 +56,15 @@ logger = setup_logger("compare_strategies")
 # ═══════════════════════════════════════════════════════════════
 
 def run_rules_backtest(days: int = None) -> dict:
-    """Run the original rule-based backtest and return equity curve + metrics."""
-    engine = BacktestEngine()
+    """
+    Run the original rule-based backtest.
+
+    Fixed vs original:
+    - Entry on next candle's open (not signal candle's close)
+    - Fees deducted on entry and exit (0.1% per side)
+    - Sharpe from daily equity curve (not per-trade returns)
+    """
+    engine = BacktestEngine(fee_pct=FEE_PCT)
     df = engine.load_data()
     df = engine.generate_signals(df)
 
@@ -64,7 +81,7 @@ def run_rules_backtest(days: int = None) -> dict:
     equity = [capital]
     dates = [df.iloc[0]["timestamp"]]
     position = 0
-    entry_price = 0
+    entry_price = 0.0
     entry_idx = 0
     trades = []
 
@@ -86,17 +103,26 @@ def run_rules_backtest(days: int = None) -> dict:
                 exit_reason = "max_hold_exit"
 
             if exit_reason:
+                # Apply exit fee
+                effective_exit = row["close"] * (1 - FEE_PCT)
+                pnl = (effective_exit - entry_price) / entry_price
                 capital *= (1 + pnl)
                 position = 0
                 trades.append(pnl)
 
-        elif row["buy_signal"] == 1 and position == 0:
+        # Entry on next candle's open after signal fires
+        elif (i > 0 and df.iloc[i - 1]["buy_signal"] == 1
+              and position == 0):
             position = 1
-            entry_price = row["close"]
+            entry_price = row["open"] * (1 + FEE_PCT)  # Entry fee
             entry_idx = i
 
         equity.append(capital)
         dates.append(row["timestamp"])
+
+    # Sharpe from daily equity curve (correct method)
+    daily_rets = daily_returns_from_equity(equity)
+    sharpe = annualized_sharpe(daily_rets)
 
     wins = [r for r in trades if r > 0]
     losses = [r for r in trades if r <= 0]
@@ -105,8 +131,8 @@ def run_rules_backtest(days: int = None) -> dict:
         "total_trades": len(trades),
         "win_rate": len(wins) / len(trades) if trades else 0,
         "total_return": capital / 10000 - 1,
-        "sharpe": (np.mean(trades) / np.std(trades) * np.sqrt(12)) if trades and np.std(trades) > 0 else 0,
-        "max_drawdown": _compute_max_drawdown(equity),
+        "sharpe": sharpe,
+        "max_drawdown": compute_max_drawdown(equity),
         "best_trade": max(trades) if trades else 0,
         "worst_trade": min(trades) if trades else 0,
     }
@@ -289,28 +315,40 @@ def run_composite_backtest(days: int = None) -> dict:
     df["composite_score"] = 0.6 * df["rules_score"] + 0.4 * df["ml_score"]
 
     # --- Backtest the composite signal ---
+    # Fixed: entry on next candle's open, fees on both sides
     capital = 10000.0
     equity = [capital]
     dates = [df.iloc[0]["timestamp"]]
     position = 0
-    entry_price = 0
+    entry_price = 0.0
     trades = []
 
     for i in range(len(df)):
         row = df.iloc[i]
-        score = row["composite_score"]
 
-        if score > 0.3 and position == 0:
-            position = 1
-            entry_price = row["close"]
-        elif score < -0.3 and position == 1:
-            pnl_pct = (row["close"] - entry_price) / entry_price
-            capital *= (1 + pnl_pct)
-            position = 0
-            trades.append(pnl_pct)
+        if position == 1:
+            score = row["composite_score"]
+            if score < -0.3:
+                # Exit: apply fee
+                effective_exit = row["close"] * (1 - FEE_PCT)
+                pnl_pct = (effective_exit - entry_price) / entry_price
+                capital *= (1 + pnl_pct)
+                position = 0
+                trades.append(pnl_pct)
+
+        elif position == 0 and i > 0:
+            prev_score = df.iloc[i - 1]["composite_score"]
+            if prev_score > 0.3:
+                # Entry on this candle's open (signal was previous candle)
+                entry_price = row["open"] * (1 + FEE_PCT)
+                position = 1
 
         equity.append(capital)
         dates.append(row["timestamp"])
+
+    # Sharpe from daily equity curve (correct method)
+    daily_rets = daily_returns_from_equity(equity)
+    sharpe = annualized_sharpe(daily_rets)
 
     wins = [r for r in trades if r > 0]
     losses = [r for r in trades if r <= 0]
@@ -319,8 +357,8 @@ def run_composite_backtest(days: int = None) -> dict:
         "total_trades": len(trades),
         "win_rate": len(wins) / len(trades) if trades else 0,
         "total_return": capital / 10000 - 1,
-        "sharpe": (np.mean(trades) / np.std(trades) * np.sqrt(12)) if trades and np.std(trades) > 0 else 0,
-        "max_drawdown": _compute_max_drawdown(equity),
+        "sharpe": sharpe,
+        "max_drawdown": compute_max_drawdown(equity),
         "best_trade": max(trades) if trades else 0,
         "worst_trade": min(trades) if trades else 0,
     }
@@ -332,15 +370,9 @@ def run_composite_backtest(days: int = None) -> dict:
 # Utilities
 # ═══════════════════════════════════════════════════════════════
 
-def _compute_max_drawdown(equity: list) -> float:
-    """Compute maximum drawdown from equity curve."""
-    peak = equity[0]
-    max_dd = 0
-    for val in equity:
-        peak = max(peak, val)
-        dd = (val - peak) / peak
-        max_dd = min(max_dd, dd)
-    return max_dd
+# NOTE: _compute_max_drawdown is now imported from utils.statistics
+# as compute_max_drawdown. The series version below is only used
+# for the drawdown plot panel.
 
 
 def _compute_drawdown_series(equity: list) -> list:
@@ -562,6 +594,41 @@ def main():
                   f"{m.get('win_rate', 0):>6.1%} "
                   f"{m.get('total_trades', 0):>7}")
     print("=" * 60)
+
+    # ── Random Baseline Test ──────────────────────────────────
+    # Answer: "Does any strategy beat a monkey picking random entries?"
+    print("\n── Random-Entry Baseline (10,000 simulations) ──")
+    try:
+        # Load price series for baseline
+        conn = get_connection()
+        try:
+            prices_df = pd.read_sql_query(
+                "SELECT close FROM table_market_price ORDER BY timestamp",
+                conn,
+            )
+        finally:
+            conn.close()
+
+        if not prices_df.empty:
+            prices = prices_df["close"].values
+            for r in results:
+                m = r["metrics"]
+                if not m or m.get("total_trades", 0) == 0:
+                    continue
+                baseline = random_entry_baseline(
+                    prices=prices,
+                    n_trades=m["total_trades"],
+                    avg_hold_days=30,  # Conservative estimate
+                    n_simulations=10_000,
+                    fee_pct=2 * FEE_PCT,
+                )
+                pval = strategy_vs_random_pvalue(
+                    m["total_return"], baseline["distribution"]
+                )
+                sig = "✅ significant" if pval < 0.05 else "❌ NOT significant"
+                print(f"  {r['name']:<35} p-value: {pval:.4f}  ({sig})")
+    except Exception as e:
+        logger.warning(f"Random baseline failed: {e}")
 
 
 if __name__ == "__main__":
