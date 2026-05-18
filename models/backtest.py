@@ -5,6 +5,12 @@ Fully offline: reads from SQLite, no network requests.
 NOTE: This is the original simple backtester. For advanced walk-forward
 backtesting with ROI tables, trailing stops, and per-trade tagging,
 see freqtrade_bridge/backtester.py (FreqtradeBacktester).
+
+Fixes applied (v2.1):
+- Entries execute on the NEXT candle's open (not signal candle's close)
+- Transaction fees deducted on both entry and exit (default 0.1%/side)
+- Sharpe ratio computed from daily equity curve (not per-trade returns)
+- Bootstrap confidence intervals on key metrics
 """
 
 import pandas as pd
@@ -13,6 +19,15 @@ from loguru import logger
 
 from database.init_db import get_connection
 from utils.config import load_config
+from utils.statistics import (
+    daily_returns_from_equity,
+    annualized_sharpe,
+    max_drawdown as compute_max_drawdown,
+    bootstrap_ci,
+)
+
+# Default fee: 0.1% per side (Binance spot taker).
+DEFAULT_FEE_PCT = 0.001
 
 
 class BacktestEngine:
@@ -26,7 +41,7 @@ class BacktestEngine:
     DEFAULT_MAX_HOLD_DAYS = 180    # Force-exit after 180 days
     DEFAULT_PROFIT_EXIT_DAYS = 90  # Take-profit exit if profitable after 90 days
 
-    def __init__(self):
+    def __init__(self, fee_pct: float = DEFAULT_FEE_PCT):
         cfg = load_config()
         sig_cfg = cfg.get("signals", {})
         self.fng_buy = sig_cfg.get("fng_buy_threshold", 25)
@@ -35,6 +50,7 @@ class BacktestEngine:
         self.stoploss = sig_cfg.get("stoploss", self.DEFAULT_STOPLOSS)
         self.max_hold_days = sig_cfg.get("max_hold_days", self.DEFAULT_MAX_HOLD_DAYS)
         self.profit_exit_days = sig_cfg.get("profit_exit_days", self.DEFAULT_PROFIT_EXIT_DAYS)
+        self.fee_pct = fee_pct
 
     def load_data(self) -> pd.DataFrame:
         """Load all features + price data for backtesting."""
@@ -89,23 +105,34 @@ class BacktestEngine:
     def run_backtest(self, df: pd.DataFrame) -> dict:
         """
         Event-driven backtest with risk management.
-        - Buy on buy_signal
-        - Sell on sell_signal, stoploss, or time-based exit
-        Returns performance metrics.
+
+        Entry price: next candle's open after signal (avoids look-ahead).
+        Fees: deducted on both entry and exit (default 0.1% per side).
+        Sharpe: computed from daily equity curve (includes flat days).
+
+        Returns performance metrics with bootstrap confidence intervals.
         """
         if df.empty:
             return {"error": "No data for backtesting"}
 
         df = df.dropna(subset=["close"]).reset_index(drop=True)
 
-        # Position tracking
+        initial_capital = 10000.0
+        capital = initial_capital
         position = 0  # 0 = flat, 1 = long
-        entry_price = 0
+        entry_price = 0.0
         entry_idx = 0
+        total_fees = 0.0
         trades = []
 
-        for i, row in df.iterrows():
+        # Daily equity curve (one value per row, starting with initial)
+        equity_curve = [capital]
+
+        for i in range(len(df)):
+            row = df.iloc[i]
+
             if position == 1:
+                # Evaluate PnL against the fee-adjusted entry price
                 current_pnl = (row["close"] - entry_price) / entry_price
                 days_held = i - entry_idx
 
@@ -128,34 +155,48 @@ class BacktestEngine:
                     exit_reason = "max_hold_exit"
 
                 if exit_reason:
+                    # Apply exit fee
+                    effective_exit = row["close"] * (1 - self.fee_pct)
+                    total_fees += row["close"] * self.fee_pct
+
+                    pnl = (effective_exit - entry_price) / entry_price
+                    capital *= (1 + pnl)
                     position = 0
-                    exit_price = row["close"]
-                    pnl = (exit_price - entry_price) / entry_price
+
                     trades.append({
                         "type": "sell",
                         "date": row["timestamp"],
-                        "price": exit_price,
+                        "price": effective_exit,
                         "return": pnl,
                         "exit_reason": exit_reason,
                         "days_held": days_held,
                     })
 
-            elif row["buy_signal"] == 1 and position == 0:
+            # Entry: signal on previous candle, execute on THIS candle's open
+            elif (i > 0 and df.iloc[i - 1]["buy_signal"] == 1
+                  and position == 0):
                 position = 1
-                entry_price = row["close"]
+                # Enter on this candle's open + entry fee
+                raw_price = row["open"]
+                entry_price = raw_price * (1 + self.fee_pct)
+                total_fees += raw_price * self.fee_pct
                 entry_idx = i
+
                 trades.append({
                     "type": "buy",
                     "date": row["timestamp"],
                     "price": entry_price,
                 })
 
-        # Calculate metrics
+            equity_curve.append(capital)
+
+        # ── Calculate metrics ─────────────────────────────────
         completed = [t for t in trades if t["type"] == "sell"]
 
         if not completed:
             return {
                 "total_trades": 0,
+                "equity_curve": equity_curve,
                 "message": "No completed trades in backtest period",
             }
 
@@ -163,18 +204,37 @@ class BacktestEngine:
         wins = [r for r in returns if r > 0]
         losses = [r for r in returns if r <= 0]
 
-        total_return = np.prod([1 + r for r in returns]) - 1
-        avg_return = np.mean(returns)
-        sharpe = (np.mean(returns) / np.std(returns) * np.sqrt(12)) if np.std(returns) > 0 else 0
+        total_return = capital / initial_capital - 1
+
+        # Sharpe from daily equity curve (correct methodology)
+        daily_rets = daily_returns_from_equity(equity_curve)
+        sharpe = annualized_sharpe(daily_rets)
+
+        # Max drawdown from equity curve
+        mdd = compute_max_drawdown(equity_curve)
+
+        # Bootstrap CIs
+        returns_arr = np.array(returns)
+        win_rate_ci = bootstrap_ci(
+            (returns_arr > 0).astype(float), stat_fn=np.mean
+        )
+        avg_return_ci = bootstrap_ci(returns_arr, stat_fn=np.mean)
 
         result = {
             "total_trades": len(completed),
             "win_rate": round(len(wins) / len(completed), 4) if completed else 0,
+            "win_rate_ci_95": [round(win_rate_ci["ci_lower"], 4),
+                               round(win_rate_ci["ci_upper"], 4)],
             "total_return": round(total_return, 4),
-            "avg_trade_return": round(avg_return, 4),
+            "avg_trade_return": round(float(np.mean(returns)), 4),
+            "avg_return_ci_95": [round(avg_return_ci["ci_lower"], 4),
+                                 round(avg_return_ci["ci_upper"], 4)],
             "best_trade": round(max(returns), 4) if returns else 0,
             "worst_trade": round(min(returns), 4) if returns else 0,
             "sharpe_ratio": round(sharpe, 4),
+            "max_drawdown": round(mdd, 4),
+            "total_fees_paid": round(total_fees, 2),
+            "equity_curve": equity_curve,
             "trades": trades,
         }
 
@@ -187,9 +247,11 @@ class BacktestEngine:
 
         logger.info(
             f"Backtest complete: {result['total_trades']} trades, "
-            f"{result['win_rate']:.0%} win rate, "
+            f"{result['win_rate']:.0%} win rate "
+            f"(95% CI: [{win_rate_ci['ci_lower']:.0%}, {win_rate_ci['ci_upper']:.0%}]), "
             f"{result['total_return']:.2%} total return, "
-            f"Sharpe: {result['sharpe_ratio']:.2f}"
+            f"Sharpe: {result['sharpe_ratio']:.2f}, "
+            f"fees: ${result['total_fees_paid']:.2f}"
         )
 
         return result
